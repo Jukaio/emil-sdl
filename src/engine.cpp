@@ -1,9 +1,9 @@
 
-#include "video.h"
+#include "engine.h"
 #include <SDL/SDL.h>
 #include <SDL/SDL_image.h>
 
-namespace video
+namespace engine
 {
 	static SDL_Window* window{ nullptr };
 	static SDL_Renderer* renderer{ nullptr };
@@ -43,12 +43,12 @@ namespace video
 		}
 	}
 
-	void set_entity_size(int width, int height)
+	void set_entity_source_size(int width, int height)
 	{
 		entity_size = { width, height };
 	}
 
-	void set_tile_size(int width, int height)
+	void set_tile_source_size(int width, int height)
 	{
 		tile_size = { width, height };
 	}
@@ -61,61 +61,42 @@ namespace video
 		}
 	}
 
-	void poll()
-	{
-	}
-
 	void draw(SDL_Texture*& texture, const SDL_Rect& src, const SDL_Rect& dst)
 	{
 		SDL_RenderCopy(renderer, texture, &src, &dst);
 	}
 
-	void draw_tile(int x, int y, const SDL_Rect& dst)
+	void draw_tile(const SDL_Point& tile, const SDL_FRect& dst)
 	{
-		SDL_Rect src{ x * tile_size.x, y * tile_size.y, tile_size.x, tile_size.y };
-		SDL_RenderCopy(renderer, tiles_texture, &src, &dst);
+		SDL_Rect src{ tile.x * tile_size.x, tile.y * tile_size.y, tile_size.x, tile_size.y };
+		SDL_RenderCopyF(renderer, tiles_texture, &src, &dst);
 	}
 
-	void draw_entity(int x, int y, const SDL_Rect& dst)
+	void draw_rect(const SDL_FRect& rect, SDL_Colour colour)
 	{
-		SDL_Rect src{ x * tile_size.x, y * tile_size.y, tile_size.x, tile_size.y };
-		SDL_RenderCopy(renderer, entity_texture, &src, &dst);
+		SDL_Colour p_c;
+		SDL_GetRenderDrawColor(renderer, &p_c.r, &p_c.g, &p_c.b, &p_c.a);
+
+		SDL_Colour c = colour;
+		SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, c.a);
+		SDL_RenderDrawRectF(renderer, &rect);
+		SDL_SetRenderDrawColor(renderer, p_c.r, p_c.g, p_c.b, p_c.a);
 	}
 
-	void clear()
+	void draw_entity(const SDL_Point& entity, const SDL_FRect& dst)
+	{
+		SDL_Rect src{ entity.x * entity_size.x, entity.y * entity_size.y, entity_size.x, entity_size.y };
+		SDL_RenderCopyF(renderer, entity_texture, &src, &dst);
+	}
+
+	void render_clear()
 	{
 		SDL_RenderClear(renderer);
 	}
 
-	void present()
+	void render_present()
 	{
 		SDL_RenderPresent(renderer);
 	}
-
-	entity::entity(int x, int y)
-		: x(x)
-		, y(y)
-	{
-
-	}
-
-	void entity::draw(const SDL_Rect& dst)
-	{
-		video::draw_entity(x, y, dst);
-	}
-
-
-	tile::tile(int x, int y)
-		: x(x)
-		, y(y)
-	{
-
-	}
-
-	void tile::draw(const SDL_Rect& dst)
-	{
-		video::draw_tile(x, y, dst);
-	}
-
 
 }
