@@ -263,6 +263,8 @@ void ball_system_run()
 
 void ball_collision_system_each(const entity& e)
 {
+	// check if E really is a ball fulfilling entity
+
 	for (int i = 0; i < used_entities_pivot; i++) {
 		if (i != e) {
 			if (component_rect_collider_exists(e)) {
