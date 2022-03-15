@@ -4,6 +4,7 @@
 #include <iostream>
 #include <functional>
 #include <vector>
+#include<string>
 
 #include "engine.h"
 #include "input.h"
@@ -13,16 +14,17 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
 
+
 using entity = size_t;
 // Invalid entity is 0 should cause a lot of cool out of the box behaviour
 #define INVALID_ENTITY 0
-#define MAXIMUM_ENTITIES 255
+#define MAXIMUM_ENTITIES 256
 
 // Entity
-size_t available_entities_pivot = MAXIMUM_ENTITIES;
+size_t available_entities_pivot{ MAXIMUM_ENTITIES };
 entity available_entities[MAXIMUM_ENTITIES];
 
-size_t used_entities_pivot = 0;
+size_t used_entities_pivot{ 0 };
 entity used_entities[MAXIMUM_ENTITIES];
 
 void initialise_entities()
@@ -46,6 +48,12 @@ entity entity_create()
 
 	return e;
 }
+
+void invalidate_components(const entity& e)
+{
+	// ...
+}
+
 void entity_destroy(entity& e)
 {
 	if (used_entities[used_entities_pivot - 1] == e) { // just track one back if we remove last one
@@ -62,6 +70,9 @@ void entity_destroy(entity& e)
 					used_entities[j] = used_entities[j + 1];
 				}
 				used_entities[used_entities_pivot - 1] = INVALID_ENTITY;
+
+				// How to invalidate all the commponents? :( Entity signature? Maybe? No. FUCK!
+				invalidate_components(e); // meh, let's just try this
 				break;
 			}
 		}
@@ -75,228 +86,65 @@ struct controller
 	SDL_Scancode left;
 	SDL_Scancode right;
 };
-bool controller_valid[MAXIMUM_ENTITIES]{ false };
-controller controllers[MAXIMUM_ENTITIES];
 
-bool speed_valid[MAXIMUM_ENTITIES]{ false };
-float speeds[MAXIMUM_ENTITIES];
-
-bool direction_valid[MAXIMUM_ENTITIES]{ false };
-SDL_FPoint directions[MAXIMUM_ENTITIES];
-
-bool rect_collider_valid[MAXIMUM_ENTITIES]{ false };
-SDL_FRect rect_colliders[MAXIMUM_ENTITIES];
-
-bool debug_colour_valid[MAXIMUM_ENTITIES]{ false };
-SDL_Colour debug_colours[MAXIMUM_ENTITIES];
 
 enum sprite_type
 {
 	SPRITE_TYPE_ENTITY,
 	SPRITE_TYPE_TILE
 };
-bool sprite_type_valid[MAXIMUM_ENTITIES]{ false };
-sprite_type sprite_types[MAXIMUM_ENTITIES];
 
-bool sprite_index_valid[MAXIMUM_ENTITIES]{ false };
-SDL_Point sprite_indeces[MAXIMUM_ENTITIES];
+// 1. First time function is used -> Register Component 
+// 2. Registration means: Each component gets associated to a number
+// 3. ... ? 
+// 4. Profit.
 
-bool position_valid[MAXIMUM_ENTITIES]{ false };
-SDL_FPoint positions[MAXIMUM_ENTITIES];
+#define COMPONENT(type, name) \
+bool name##_initialised{false}; \
+bool name##_valid[MAXIMUM_ENTITIES]{ false }; \
+type name##_buffer[MAXIMUM_ENTITIES]; \
+bool component_##name##_exists(const entity& e) \
+{ \
+	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
+		return false; \
+	} \
+	return name##_valid[e]; \
+} \
+void component_##name##_set(const entity& e, const type& v) \
+{ \
+	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
+		name##_valid[e] = true; \
+		name##_buffer[e] = v; \
+	} \
+	else { \
+		printf("Error in %s of type %s", #name, #type); \
+	} \
+} \
+type& component_##name##_get(const entity& e) \
+{ \
+	return name##_buffer[e]; \
+} \
+void component_##name##_destroy(const entity& e) \
+{ \
+	if (e != INVALID_ENTITY) { \
+		name##_valid[e] = false; \
+	} \
+} \
 
-bool size_valid[MAXIMUM_ENTITIES]{ false };
-SDL_FPoint sizes[MAXIMUM_ENTITIES];
+COMPONENT(controller,	controller)
+COMPONENT(float,		speed)
+COMPONENT(SDL_FPoint,	direction)
+COMPONENT(SDL_FPoint,	collider_offset)
+COMPONENT(SDL_FCircle,	circle_collider)
+COMPONENT(SDL_FRect,	rect_collider)
+COMPONENT(sprite_type,	sprite_type)
+COMPONENT(SDL_Point,	sprite_index)
+COMPONENT(SDL_FPoint,	position)
+COMPONENT(SDL_FPoint,	size)
 
-bool component_controller_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return controller_valid[e];
-}
-void component_controller_set(const entity& e, const controller& controls)
-{
-	if (e != INVALID_ENTITY) {
-		controller_valid[e] = true;
-		controllers[e] = controls;
-	}
-}
-void component_controller_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		controller_valid[e] = false;
-	}
-}
-
-bool component_speed_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return speed_valid[e];
-}
-void component_speed_set(const entity& e, const float& speed)
-{
-	if (e != INVALID_ENTITY) {
-		speed_valid[e] = true;
-		speeds[e] = speed;
-	}
-}
-void component_speed_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		speed_valid[e] = false;
-	}
-}
-
-bool component_direction_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return direction_valid[e];
-}
-void component_direction_set(const entity& e, const SDL_FPoint& direction)
-{
-	if (e != INVALID_ENTITY) {
-		direction_valid[e] = true;
-		directions[e] = direction;
-	}
-}
-void component_direction_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		direction_valid[e] = false;
-	}
-}
-
-bool component_rect_collider_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return rect_collider_valid[e];
-}
-void component_rect_collider_set(const entity& e, const SDL_FRect& collider)
-{
-	if (e != INVALID_ENTITY) {
-		rect_collider_valid[e] = true;
-		rect_colliders[e] = collider;
-	}
-}
-void component_rect_collider_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		rect_collider_valid[e] = false;
-	}
-}
-
-bool component_colour_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return debug_colour_valid[e];
-}
-void component_colour_set(const entity& e, const SDL_Colour& colour)
-{
-	if (e != INVALID_ENTITY) {
-		debug_colour_valid[e] = true;
-		debug_colours[e] = colour;
-	}
-}
-void component_colour_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		debug_colour_valid[e] = false;
-	}
-}
-
-bool component_sprite_type_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return sprite_type_valid[e];
-}
-void component_sprite_type_set(const entity& e, const sprite_type& type)
-{
-	if (e != INVALID_ENTITY) {
-		sprite_type_valid[e] = true;
-		sprite_types[e] = type;
-	}
-}
-void component_sprite_type_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		sprite_type_valid[e] = false;
-	}
-}
-
-bool component_sprite_index_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return sprite_index_valid[e];
-}
-void component_sprite_index_set(const entity& e, const SDL_Point& index)
-{
-	if (e != INVALID_ENTITY) {
-		sprite_index_valid[e] = true;
-		sprite_indeces[e] = index;
-	}
-}
-void component_sprite_index_destroy(const entity e)
-{
-	if (e != INVALID_ENTITY) {
-		sprite_index_valid[e] = false;
-	}
-}
-
-bool component_position_exists(const entity& e)
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return position_valid[e];
-}
-void component_position_set(const entity& e, const SDL_FPoint& position)
-{
-	if (e != INVALID_ENTITY) {
-		position_valid[e] = true;
-		positions[e] = position;
-	}
-}
-void component_position_destroy(const entity& e)
-{
-	if (e != INVALID_ENTITY) {
-		position_valid[e] = false;
-	}
-}
-
-bool component_size_exists(const entity& e) 
-{
-	if (e == INVALID_ENTITY) {
-		return false;
-	}
-	return size_valid[e];
-}
-void component_size_set(const entity& e, const SDL_FPoint& size)
-{
-	if (e != INVALID_ENTITY) {
-		size_valid[e] = true;
-		sizes[e] = size;
-	}
-}
-void component_size_destroy(const entity& e)
-{
-	if (e != INVALID_ENTITY) {
-		size_valid[e] = false;
-	}
-}
 
 // Systems - Optimisation idea, instead of iterating through EVERYTHING, subsribe them : ) 
+// TODO: Make filter so systems only care for THEIR entities. IDK :D 
 bool entity_can_use_draw_system(const entity& e)
 {
 	return component_sprite_type_exists(e)
@@ -308,16 +156,16 @@ bool entity_can_use_draw_system(const entity& e)
 void draw_system_each(const entity& e)
 {
 	if (entity_can_use_draw_system(e)) {
-		SDL_FPoint p = positions[e];
-		SDL_FPoint s = sizes[e];
+		SDL_FPoint p = component_position_get(e);
+		SDL_FPoint s = component_size_get(e);
 		SDL_FRect destination{ p.x, p.y, s.x, s.y};
-		switch (sprite_types[e]) {
+		switch (component_sprite_type_get(e)) {
 			case SPRITE_TYPE_ENTITY:
-				engine::draw_entity(sprite_indeces[e], destination);
+				engine::draw_entity(component_sprite_index_get(e), destination);
 				break;
 
 			case SPRITE_TYPE_TILE:
-				engine::draw_tile(sprite_indeces[e], destination);
+				engine::draw_tile(component_sprite_index_get(e), destination);
 				break;
 		}
 	}
@@ -335,18 +183,21 @@ bool entity_can_use_player_system(const entity& e)
 	return component_controller_exists(e) && component_position_exists(e) && component_speed_exists(e);
 }
 
+
 void player_system_each(const entity& e)
 {
 	if (entity_can_use_player_system(e)) {
 		int move{ 0 };
+		controller c{ component_controller_get(e) };
 
-		if (input::is_down(controllers[e].left)) {
+		if (input::is_down(c.left)) {
 			move -= 1;
 		}
-		if (input::is_down(controllers[e].right)) {
+		if (input::is_down(c.right)) {
 			move += 1;
 		}
-		positions[e].x += (move * speeds[e]);
+
+		component_position_get(e).x += (move * component_speed_get(e));
 	}
 }
 
@@ -359,34 +210,44 @@ void player_system_run()
 
 bool entity_can_use_ball_system(const entity& e)
 {
-	return !component_controller_exists(e) 
-		&& component_position_exists(e) 
-		&& component_speed_exists(e) 
-		&& component_direction_exists(e);
+	return !component_controller_exists(e)
+		&& component_position_exists(e)
+		&& component_speed_exists(e)
+		&& component_direction_exists(e)
+		&& component_circle_collider_exists(e);
 }
 
 void ball_system_each(const entity& e)
 {
 	if (entity_can_use_ball_system(e)) {
-		SDL_FPoint dir{ directions[e] };
-		float speed{ speeds[e] };
-
+		SDL_FPoint& direction{ component_direction_get(e) };
+		SDL_FPoint dir{ direction };
+		// Normalise and apply
+		float speed{ component_speed_get(e) };
 		float length = dir.x * dir.x + dir.y * dir.y;
 		if (length > 0.0f) {
 			dir.x / length;
 			dir.y / length;
 		}
+		direction = dir;
 
-		directions[e] = dir;
+		// Reuse dir velocity
+		SDL_FPoint velocity{ dir.x * speed, dir.y * speed };
 
-		dir.x *= speed;
-		dir.y *= speed;
-
-		positions[e].x += dir.x;
-		if (positions[e].y + dir.y <= 0.0f || positions[e].y + dir.y >= SCREEN_HEIGHT) {
-			directions[e].y = -directions[e].y;
+		// Apply velocity - Reflect from screen edges
+		SDL_FPoint& position{ component_position_get(e) };
+		SDL_FCircle circle{ component_circle_collider_get(e) };
+		if ((circle.x - circle.radius) + dir.x <= 0.0f || (circle.x + circle.radius) + dir.x >= SCREEN_WIDTH) {
+			direction.x = -direction.x;
+			velocity.x = -velocity.x;
 		}
-		positions[e].y += dir.y;
+		if ((circle.y - circle.radius) + dir.y <= 0.0f || (circle.y + circle.radius) + dir.y >= SCREEN_HEIGHT) {
+			direction.y = -direction.y;
+			velocity.y = -velocity.y;
+		}
+
+		position.x += velocity.x;
+		position.y += velocity.y;
 	}
 }
 
@@ -397,10 +258,47 @@ void ball_system_run()
 	}
 }
 
+void collider_update_position_system_each(const entity& e)
+{
+	if (!component_position_exists(e)) {
+		return;
+	}
+
+	SDL_FPoint position = component_position_get(e);
+	if (component_rect_collider_exists(e)) {
+		SDL_FRect& rect = component_rect_collider_get(e);
+		if (component_collider_offset_exists(e)) {
+			SDL_FPoint offset = component_collider_offset_get(e);
+			position.x += offset.x;
+			position.y += offset.y;
+		}
+		rect.x = position.x;
+		rect.y = position.y;
+	}
+	if (component_circle_collider_exists(e)) {
+		SDL_FCircle& circle = component_circle_collider_get(e);
+		if (component_collider_offset_exists(e)) {
+			SDL_FPoint offset = component_collider_offset_get(e);
+			position.x += offset.x;
+			position.y += offset.y;
+		}
+		circle.x = position.x;
+		circle.y = position.y;
+	}
+}
+
+void collider_update_position_system_run()
+{
+	for (int i = 0; i < used_entities_pivot; i++) {
+		collider_update_position_system_each(used_entities[i]);
+	}
+}
+
 void debug_rect_collider_system_each(const entity& e)
 {
-	if (component_rect_collider_exists(e), component_colour_exists(e)) {
-		engine::draw_rect(rect_colliders[e], debug_colours[e]);
+	if (component_rect_collider_exists(e)) {
+		SDL_FRect rect = component_rect_collider_get(e);
+		engine::draw_rect(rect, {255, 0, 0, 255});
 	}
 }
 
@@ -411,16 +309,39 @@ void debug_rect_collider_system_run()
 	}
 }
 
+void debug_circle_collider_system_each(const entity& e)
+{
+	if (component_circle_collider_exists(e)) {
+		SDL_FCircle circle = component_circle_collider_get(e);
+		engine::draw_circle(circle, { 255, 255, 0, 255 });
+	}
+}
+
+void debug_circle_collider_system_run()
+{
+	for (int i = 0; i < used_entities_pivot; i++) {
+		debug_circle_collider_system_each(used_entities[i]);
+	}
+}
+
 void run(float dt)
 {
 	player_system_run();
 	ball_system_run();
-
+	collider_update_position_system_run();
+	
 
 	engine::render_clear();
 	draw_system_run();
 	debug_rect_collider_system_run();
+	debug_circle_collider_system_run();
 	engine::render_present();
+}
+
+int& get_instance()
+{
+	static int instance{};
+	return instance;
 }
 
 int main()
@@ -429,7 +350,7 @@ int main()
 	engine::initialise(SCREEN_WIDTH, SCREEN_HEIGHT);
 	engine::load_entities_texture("res/objects.png");
 	engine::set_entity_source_size(32, 32);
-	
+
 	engine::load_tiles_texture("res/rock_packed.png");
 	engine::set_tile_source_size(18, 18);
 
@@ -445,8 +366,6 @@ int main()
 			component_size_set(block, { 64, 64 });
 			component_sprite_index_set(block, { 1, 1 });
 			component_sprite_type_set(block, SPRITE_TYPE_TILE);
-
-			component_colour_set(block, { 255, 0, 0, 255 });
 			component_rect_collider_set(block, collider);
 			blocks[(y * 10) + x] = block;
 		}
@@ -460,7 +379,8 @@ int main()
 	component_sprite_type_set(player, SPRITE_TYPE_ENTITY);
 	component_speed_set(player, 10.0f);
 	component_controller_set(player, { SDL_SCANCODE_A, SDL_SCANCODE_D });
-	component_colour_set(player, { 255, 0, 0, 255 });
+	component_collider_offset_set(player, { 32, 32 });
+	component_circle_collider_set(player, { 400 - 32, 500, 32.0f });
 
 	// Construct ball
 	entity ball{ entity_create() };
@@ -468,9 +388,10 @@ int main()
 	component_size_set(ball, { 64, 64 });
 	component_sprite_index_set(ball, { 1, 1 });
 	component_sprite_type_set(ball, SPRITE_TYPE_ENTITY);
-	component_speed_set(ball, 8.0f);
-	component_direction_set(ball, { 0.0f, -1.0f });
-
+	component_speed_set(ball, 2.0f);
+	component_direction_set(ball, { 1.0f, -1.0f });
+	component_collider_offset_set(ball, { 32, 32 });
+	component_circle_collider_set(ball, { 400 - 32, 500, 32.0f });
 
 	bool running = true;
 
@@ -490,6 +411,7 @@ int main()
 		prev_ticks = ticks;
 		float dt = ((float)delta_ticks / SDL_GetPerformanceFrequency()) * SECONDS;
 
+	
 		events::run();
 		input::run();
 

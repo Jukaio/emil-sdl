@@ -2,15 +2,15 @@
 #include "events.h"
 #include <unordered_map>
 
+#include "engine.h"
+
 using callback_lookup = std::unordered_map<SDL_EventType, std::vector<events::callback>>;
 static callback_lookup lookup;
-
 
 void events::add(const SDL_EventType& type, events::callback action)
 {
 	lookup[type].push_back(action);
 }
-
 
 void events::remove(const SDL_EventType& type, events::callback action)
 {

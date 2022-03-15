@@ -1,7 +1,6 @@
 #pragma once
 
 #include <SDL/SDL_scancode.h>
-
 struct input
 {
 	static void run();

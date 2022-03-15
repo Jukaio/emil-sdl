@@ -1,7 +1,32 @@
 
 #include "engine.h"
 #include <SDL/SDL.h>
+#include <SDL/SDL_ttf.h>
 #include <SDL/SDL_image.h>
+
+void SDL_RenderDrawCircleF(SDL_Renderer* renderer, const SDL_FCircle* circle)
+{
+	int resolution = 48;
+	float step = (2 * 3.14f) / resolution;
+
+	for (int i = 0; i < resolution; ++i)
+	{
+		float angle = step * i;
+		float x1 = cos(angle);
+		float y1 = sin(angle);
+
+		float next_angle = step * (i + 1);
+		float x2 = cos(next_angle);
+		float y2 = sin(next_angle);
+
+		SDL_RenderDrawLineF(renderer,
+			x1 * circle->radius + circle->x,
+			y1 * circle->radius + circle->y,
+			x2 * circle->radius + circle->x,
+			y2 * circle->radius + circle->y
+		);
+	}
+}
 
 namespace engine
 {
@@ -33,6 +58,7 @@ namespace engine
 		SDL_Init(SDL_INIT_EVERYTHING);
 		SDL_CreateWindowAndRenderer(width, height, 0, &window, &renderer);
 		IMG_Init(IMG_INIT_JPG);
+		TTF_Init();
 	}
 
 	void load_entities_texture(const char* path)
@@ -80,6 +106,17 @@ namespace engine
 		SDL_Colour c = colour;
 		SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, c.a);
 		SDL_RenderDrawRectF(renderer, &rect);
+		SDL_SetRenderDrawColor(renderer, p_c.r, p_c.g, p_c.b, p_c.a);
+	}
+
+	void draw_circle(const SDL_FCircle& circle, SDL_Colour colour) 
+	{
+		SDL_Colour p_c;
+		SDL_GetRenderDrawColor(renderer, &p_c.r, &p_c.g, &p_c.b, &p_c.a);
+
+		SDL_Colour c = colour;
+		SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, c.a);
+		SDL_RenderDrawCircleF(renderer, &circle);
 		SDL_SetRenderDrawColor(renderer, p_c.r, p_c.g, p_c.b, p_c.a);
 	}
 

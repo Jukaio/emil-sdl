@@ -1,0 +1,4 @@
+sad sad
+C++ is very sad
+sad C++
+C is cool, but C++ is sad

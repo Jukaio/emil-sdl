@@ -6,7 +6,6 @@
 static Uint8 prev_state[SDL_NUM_SCANCODES]{ false };
 static Uint8 curr_state[SDL_NUM_SCANCODES]{ false };
 
-
 void input::run()
 {
 	for (int i = 0; i < SDL_NUM_SCANCODES; i++) {
@@ -19,6 +18,7 @@ bool input::is_down(SDL_Scancode code)
 {
 	return curr_state[code];
 }
+
 bool input::is_up(SDL_Scancode code)
 {
 	return !curr_state[code];
