@@ -69,8 +69,10 @@ void entity_destroy(entity& e)
 				for (int j = i; j < used_entities_pivot - 1; j++) {
 					used_entities[j] = used_entities[j + 1];
 				}
-				used_entities[used_entities_pivot - 1] = INVALID_ENTITY;
-
+				used_entities_pivot -= 1;
+				used_entities[used_entities_pivot] = INVALID_ENTITY;
+				available_entities[available_entities_pivot] = e;
+				available_entities_pivot += 1;
 				// How to invalidate all the commponents? :( Entity signature? Maybe? No. FUCK!
 				invalidate_components(e); // meh, let's just try this
 				break;
@@ -141,6 +143,7 @@ COMPONENT(sprite_type,	sprite_type)
 COMPONENT(SDL_Point,	sprite_index)
 COMPONENT(SDL_FPoint,	position)
 COMPONENT(SDL_FPoint,	size)
+COMPONENT(SDL_Colour,	debug_color)	
 
 
 // Systems - Optimisation idea, instead of iterating through EVERYTHING, subsribe them : ) 
@@ -258,6 +261,28 @@ void ball_system_run()
 	}
 }
 
+void ball_collision_system_each(const entity& e)
+{
+	for (int i = 0; i < used_entities_pivot; i++) {
+		if (i != e) {
+			if (component_rect_collider_exists(e)) {
+				if (component_debug_color_exists(e)) {
+					SDL_Colour debug_colour = component_debug_color_get(e);
+					// Do collision here
+					// SDL does not provide SDL_FRect collision
+				}
+			}
+		}
+	}
+}
+
+void ball_collision_system_run()
+{
+	for (int i = 0; i < used_entities_pivot; i++) {
+		ball_collision_system_each(used_entities[i]);
+	}
+}
+
 void collider_update_position_system_each(const entity& e)
 {
 	if (!component_position_exists(e)) {
@@ -338,12 +363,6 @@ void run(float dt)
 	engine::render_present();
 }
 
-int& get_instance()
-{
-	static int instance{};
-	return instance;
-}
-
 int main()
 {
 	initialise_entities();
@@ -367,6 +386,7 @@ int main()
 			component_sprite_index_set(block, { 1, 1 });
 			component_sprite_type_set(block, SPRITE_TYPE_TILE);
 			component_rect_collider_set(block, collider);
+			component_debug_color_set(block, { 255, 0, 0, 255 });
 			blocks[(y * 10) + x] = block;
 		}
 	}
