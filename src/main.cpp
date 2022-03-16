@@ -11,9 +11,52 @@
 #include "events.h"
 #include <math.h>
 
+// template draft idea
+//template<typename T>
+//struct component_buffers {
+//	bool valid[MAXIMUM_ENTITIES]{ false };
+//	T buffer[MAXIMUM_ENTITIES];
+//};
+//
+//template<auto& Global_Buffer>
+//struct component_logic {
+//	using Buffer_T = std::decay_t<decltype(Global_Buffer.buffer)>;
+//
+//	static bool exists(const entity& e) {
+//		if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES) {
+//			return false;
+//		}
+//		return Global_Buffer.valid[e];
+//	}
+//
+//	static void set(const entity& e, const Buffer_T& v) {
+//		if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) {
+//			Global_Buffer.valid[e] = true;
+//			Global_Buffer.buffer[e] = v;
+//		}
+//		else {
+//			printf("Error, sadly can't show you the type name nor the component name :(");
+//		}
+//	}
+//
+//	static Buffer_T get(const entity& e) {
+//		return Global_Buffer.buffer[e];
+//	}
+//
+//	static void destroy(const entity& e) {
+//		if (e != INVALID_ENTITY) {
+//			Global_Buffer.buffer[e] = false;
+//		}
+//	}
+//};
+//
+//// define component
+//auto controller_components = component_buffers<controller>{};
+//// access
+//component_logic<controller_components>::get(entity); // etc
+
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-
 
 using entity = size_t;
 // Invalid entity is 0 should cause a lot of cool out of the box behaviour
@@ -59,6 +102,8 @@ void entity_destroy(entity& e)
 	if (used_entities[used_entities_pivot - 1] == e) { // just track one back if we remove last one
 		used_entities_pivot -= 1;
 		used_entities[used_entities_pivot] = INVALID_ENTITY;
+		available_entities[available_entities_pivot] = e;
+		available_entities_pivot += 1;
 	}
 	else {
 		// otherwise... find...
@@ -101,18 +146,18 @@ enum sprite_type
 // 3. ... ? 
 // 4. Profit.
 
+
 #define COMPONENT(type, name) \
-bool name##_initialised{false}; \
 bool name##_valid[MAXIMUM_ENTITIES]{ false }; \
 type name##_buffer[MAXIMUM_ENTITIES]; \
-bool component_##name##_exists(const entity& e) \
+bool name##_exists(const entity e) \
 { \
 	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
 		return false; \
 	} \
 	return name##_valid[e]; \
 } \
-void component_##name##_set(const entity& e, const type& v) \
+void name##_set(const entity e, const type& v) \
 { \
 	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
 		name##_valid[e] = true; \
@@ -122,53 +167,56 @@ void component_##name##_set(const entity& e, const type& v) \
 		printf("Error in %s of type %s", #name, #type); \
 	} \
 } \
-type& component_##name##_get(const entity& e) \
+type& name##_get(const entity e) \
 { \
 	return name##_buffer[e]; \
 } \
-void component_##name##_destroy(const entity& e) \
+void name##_destroy(const entity e) \
 { \
 	if (e != INVALID_ENTITY) { \
 		name##_valid[e] = false; \
 	} \
 } \
 
-COMPONENT(controller,	controller)
-COMPONENT(float,		speed)
-COMPONENT(SDL_FPoint,	direction)
-COMPONENT(SDL_FPoint,	collider_offset)
-COMPONENT(SDL_FCircle,	circle_collider)
-COMPONENT(SDL_FRect,	rect_collider)
-COMPONENT(sprite_type,	sprite_type)
-COMPONENT(SDL_Point,	sprite_index)
-COMPONENT(SDL_FPoint,	position)
-COMPONENT(SDL_FPoint,	size)
-COMPONENT(SDL_Colour,	debug_color)	
-
+namespace components
+{
+	COMPONENT(controller,	controller)
+	COMPONENT(float,		speed)
+	COMPONENT(SDL_FPoint,	direction)
+	COMPONENT(SDL_FPoint,	collider_offset)
+	COMPONENT(SDL_FCircle,	circle_collider)
+	COMPONENT(SDL_FRect,	rect_collider)
+	COMPONENT(sprite_type,	sprite_type)
+	COMPONENT(SDL_Point,	sprite_index)
+	COMPONENT(SDL_FPoint,	position)
+	COMPONENT(SDL_FPoint,	size)
+	COMPONENT(SDL_Colour,	debug_color)	
+}
 
 // Systems - Optimisation idea, instead of iterating through EVERYTHING, subsribe them : ) 
 // TODO: Make filter so systems only care for THEIR entities. IDK :D 
 bool entity_can_use_draw_system(const entity& e)
 {
-	return component_sprite_type_exists(e)
-		&& component_sprite_index_exists(e)
-		&& component_position_exists(e)
-		&& component_size_exists(e);
+	using namespace components;
+	return sprite_type_exists(e)
+		&& sprite_index_exists(e)
+		&& position_exists(e)
+		&& size_exists(e);
 }
 
 void draw_system_each(const entity& e)
 {
 	if (entity_can_use_draw_system(e)) {
-		SDL_FPoint p = component_position_get(e);
-		SDL_FPoint s = component_size_get(e);
+		SDL_FPoint p = components::position_get(e);
+		SDL_FPoint s = components::size_get(e);
 		SDL_FRect destination{ p.x, p.y, s.x, s.y};
-		switch (component_sprite_type_get(e)) {
+		switch (components::sprite_type_get(e)) {
 			case SPRITE_TYPE_ENTITY:
-				engine::draw_entity(component_sprite_index_get(e), destination);
+				engine::draw_entity(components::sprite_index_get(e), destination);
 				break;
 
 			case SPRITE_TYPE_TILE:
-				engine::draw_tile(component_sprite_index_get(e), destination);
+				engine::draw_tile(components::sprite_index_get(e), destination);
 				break;
 		}
 	}
@@ -183,7 +231,7 @@ void draw_system_run()
 
 bool entity_can_use_player_system(const entity& e)
 {
-	return component_controller_exists(e) && component_position_exists(e) && component_speed_exists(e);
+	return components::controller_exists(e) && components::position_exists(e) && components::speed_exists(e);
 }
 
 
@@ -191,7 +239,7 @@ void player_system_each(const entity& e)
 {
 	if (entity_can_use_player_system(e)) {
 		int move{ 0 };
-		controller c{ component_controller_get(e) };
+		controller c{ components::controller_get(e) };
 
 		if (input::is_down(c.left)) {
 			move -= 1;
@@ -200,7 +248,7 @@ void player_system_each(const entity& e)
 			move += 1;
 		}
 
-		component_position_get(e).x += (move * component_speed_get(e));
+		components::position_get(e).x += (move * components::speed_get(e));
 	}
 }
 
@@ -213,33 +261,45 @@ void player_system_run()
 
 bool entity_can_use_ball_system(const entity& e)
 {
-	return !component_controller_exists(e)
-		&& component_position_exists(e)
-		&& component_speed_exists(e)
-		&& component_direction_exists(e)
-		&& component_circle_collider_exists(e);
+	return !components::controller_exists(e)
+		&& components::position_exists(e)
+		&& components::speed_exists(e)
+		&& components::direction_exists(e)
+		&& components::circle_collider_exists(e);
+}
+
+void SDL_FPointNormalise(SDL_FPoint* v)
+{
+	float length = sqrt(v->x * v->x + v->y * v->y);
+	if (length > 0.0f) {
+		v->x /= length;
+		v->y /= length;
+	}
+}
+
+SDL_FPoint SDL_FPointGetNormalised(SDL_FPoint v)
+{
+	SDL_FPointNormalise(&v);
+	return v;
 }
 
 void ball_system_each(const entity& e)
 {
 	if (entity_can_use_ball_system(e)) {
-		SDL_FPoint& direction{ component_direction_get(e) };
+		SDL_FPoint& direction{ components::direction_get(e) };
 		SDL_FPoint dir{ direction };
 		// Normalise and apply
-		float speed{ component_speed_get(e) };
-		float length = dir.x * dir.x + dir.y * dir.y;
-		if (length > 0.0f) {
-			dir.x / length;
-			dir.y / length;
-		}
+		float speed{ components::speed_get(e) };
+
+		SDL_FPointNormalise(&dir);
 		direction = dir;
 
 		// Reuse dir velocity
 		SDL_FPoint velocity{ dir.x * speed, dir.y * speed };
 
 		// Apply velocity - Reflect from screen edges
-		SDL_FPoint& position{ component_position_get(e) };
-		SDL_FCircle circle{ component_circle_collider_get(e) };
+		SDL_FPoint& position{ components::position_get(e) };
+		SDL_FCircle circle{ components::circle_collider_get(e) };
 		if ((circle.x - circle.radius) + dir.x <= 0.0f || (circle.x + circle.radius) + dir.x >= SCREEN_WIDTH) {
 			direction.x = -direction.x;
 			velocity.x = -velocity.x;
@@ -261,17 +321,84 @@ void ball_system_run()
 	}
 }
 
+float SDL_FPointDot(SDL_FPoint lhs, SDL_FPoint rhs)
+{ 
+	return lhs.x * rhs.x + lhs.y * rhs.y; 
+}
+
+SDL_FPoint SDL_FPointReflect(SDL_FPoint direction, SDL_FPoint normal)
+{
+	float factor = -2.0f * SDL_FPointDot(normal, direction);
+	return { factor * normal.x + direction.x, factor * normal.y + direction.y };
+}
+
+
+bool SDL_IntersectFCircleFRect(const SDL_FCircle& circle, const SDL_FRect& rect, SDL_FPoint& out_normal)
+{
+	float x = circle.x;
+	float y = circle.y;
+	out_normal = { 0, 0 };
+	if (circle.x < rect.x)
+	{
+		x = rect.x;
+		out_normal.x = -1;
+	}
+	else if (circle.x > rect.x + rect.w)
+	{
+		x = rect.x + rect.w;
+		out_normal.x = 1;
+	}
+
+	if (circle.y < rect.y)
+	{
+		y = rect.y;
+		out_normal.y = -1;
+	}
+	else if (circle.y > rect.y + rect.h)
+	{
+		y = rect.y + rect.h;
+		out_normal.y = 1;
+	}
+
+	SDL_FPointNormalise(&out_normal);
+
+	float distX = circle.x - x;
+	float distY = circle.y - y;
+	float distance = sqrt((distX * distX) + (distY * distY));
+
+	if (distance <= circle.radius)
+	{
+		return true;
+	}
+	return false;
+}
+
+
 void ball_collision_system_each(const entity& e)
 {
 	// check if E really is a ball fulfilling entity
-
+	if (!entity_can_use_ball_system(e)) {
+		return;
+	}
+	using namespace components;
 	for (int i = 0; i < used_entities_pivot; i++) {
 		if (i != e) {
-			if (component_rect_collider_exists(e)) {
-				if (component_debug_color_exists(e)) {
-					SDL_Colour debug_colour = component_debug_color_get(e);
-					// Do collision here
-					// SDL does not provide SDL_FRect collision
+			entity other = used_entities[i];
+			if (rect_collider_exists(other)) {
+				SDL_FCircle ball_collider = circle_collider_get(e);
+				SDL_FRect other_collider = rect_collider_get(other);
+				SDL_FPoint normal;
+				if (SDL_IntersectFCircleFRect(ball_collider, other_collider, normal)) { // This is rubbish...
+					printf("Normal: %f - %f\n", normal.x, normal.y);
+					SDL_FPoint center =
+					{
+						other_collider.x + (other_collider.w * 0.5f),
+						other_collider.y + (other_collider.h * 0.5f)
+					};
+					SDL_FPoint& direction = direction_get(e);
+					direction = SDL_FPointReflect(direction, normal);
+					entity_destroy(other);
+					break;
 				}
 			}
 		}
@@ -287,25 +414,25 @@ void ball_collision_system_run()
 
 void collider_update_position_system_each(const entity& e)
 {
-	if (!component_position_exists(e)) {
+	if (!components::position_exists(e)) {
 		return;
 	}
 
-	SDL_FPoint position = component_position_get(e);
-	if (component_rect_collider_exists(e)) {
-		SDL_FRect& rect = component_rect_collider_get(e);
-		if (component_collider_offset_exists(e)) {
-			SDL_FPoint offset = component_collider_offset_get(e);
+	SDL_FPoint position = components::position_get(e);
+	if (components::rect_collider_exists(e)) {
+		SDL_FRect& rect = components::rect_collider_get(e);
+		if (components::collider_offset_exists(e)) {
+			SDL_FPoint offset = components::collider_offset_get(e);
 			position.x += offset.x;
 			position.y += offset.y;
 		}
 		rect.x = position.x;
 		rect.y = position.y;
 	}
-	if (component_circle_collider_exists(e)) {
-		SDL_FCircle& circle = component_circle_collider_get(e);
-		if (component_collider_offset_exists(e)) {
-			SDL_FPoint offset = component_collider_offset_get(e);
+	if (components::circle_collider_exists(e)) {
+		SDL_FCircle& circle = components::circle_collider_get(e);
+		if (components::collider_offset_exists(e)) {
+			SDL_FPoint offset = components::collider_offset_get(e);
 			position.x += offset.x;
 			position.y += offset.y;
 		}
@@ -323,9 +450,14 @@ void collider_update_position_system_run()
 
 void debug_rect_collider_system_each(const entity& e)
 {
-	if (component_rect_collider_exists(e)) {
-		SDL_FRect rect = component_rect_collider_get(e);
-		engine::draw_rect(rect, {255, 0, 0, 255});
+	if (components::rect_collider_exists(e)) {
+		SDL_FRect rect = components::rect_collider_get(e);
+		if (components::debug_color_exists(e)) {
+			engine::draw_rect(rect, components::debug_color_get(e));
+		}
+		else {
+			engine::draw_rect(rect, {255, 0, 0, 255});
+		}
 	}
 }
 
@@ -338,8 +470,8 @@ void debug_rect_collider_system_run()
 
 void debug_circle_collider_system_each(const entity& e)
 {
-	if (component_circle_collider_exists(e)) {
-		SDL_FCircle circle = component_circle_collider_get(e);
+	if (components::circle_collider_exists(e)) {
+		SDL_FCircle circle = components::circle_collider_get(e);
 		engine::draw_circle(circle, { 255, 255, 0, 255 });
 	}
 }
@@ -356,7 +488,7 @@ void run(float dt)
 	player_system_run();
 	ball_system_run();
 	collider_update_position_system_run();
-	
+	ball_collision_system_run();
 
 	engine::render_clear();
 	draw_system_run();
@@ -383,37 +515,37 @@ int main()
 			entity block = entity_create();
 			SDL_FPoint position{ offset.x + (x * 64), offset.y + (y * 64) };
 			SDL_FRect collider{ position.x, position.y, 64, 64 };
-			component_position_set(block, position);
-			component_size_set(block, { 64, 64 });
-			component_sprite_index_set(block, { 1, 1 });
-			component_sprite_type_set(block, SPRITE_TYPE_TILE);
-			component_rect_collider_set(block, collider);
-			component_debug_color_set(block, { 255, 0, 0, 255 });
+			components::position_set(block, position);
+			components::size_set(block, { 64, 64 });
+			components::sprite_index_set(block, { 1, 1 });
+			components::sprite_type_set(block, SPRITE_TYPE_TILE);
+			components::rect_collider_set(block, collider);
+			components::debug_color_set(block, { 255, 0, 0, 255 });
 			blocks[(y * 10) + x] = block;
 		}
 	}
 
 	// Construct player
 	entity player{ entity_create() };
-	component_position_set(player, { 400 - 32, 500 });
-	component_size_set(player, { 64, 64 });
-	component_sprite_index_set(player, { 1, 1 });
-	component_sprite_type_set(player, SPRITE_TYPE_ENTITY);
-	component_speed_set(player, 10.0f);
-	component_controller_set(player, { SDL_SCANCODE_A, SDL_SCANCODE_D });
-	component_collider_offset_set(player, { 32, 32 });
-	component_circle_collider_set(player, { 400 - 32, 500, 32.0f });
+	components::position_set(player, { 400 - 32, 500 });
+	components::size_set(player, { 64, 64 });
+	components::sprite_index_set(player, { 1, 1 });
+	components::sprite_type_set(player, SPRITE_TYPE_ENTITY);
+	components::speed_set(player, 10.0f);
+	components::controller_set(player, { SDL_SCANCODE_A, SDL_SCANCODE_D });
+	components::collider_offset_set(player, { 32, 32 });
+	components::circle_collider_set(player, { 400 - 32, 500, 32.0f });
 
 	// Construct ball
 	entity ball{ entity_create() };
-	component_position_set(ball, { 400 - 32, 500 });
-	component_size_set(ball, { 64, 64 });
-	component_sprite_index_set(ball, { 1, 1 });
-	component_sprite_type_set(ball, SPRITE_TYPE_ENTITY);
-	component_speed_set(ball, 2.0f);
-	component_direction_set(ball, { 1.0f, -1.0f });
-	component_collider_offset_set(ball, { 32, 32 });
-	component_circle_collider_set(ball, { 400 - 32, 500, 32.0f });
+	components::position_set(ball, { 400 - 32, 500 });
+	components::size_set(ball, { 64, 64 });
+	components::sprite_index_set(ball, { 1, 1 });
+	components::sprite_type_set(ball, SPRITE_TYPE_ENTITY);
+	components::speed_set(ball, 2.0f);
+	components::direction_set(ball, { 1.0f, -1.0f });
+	components::collider_offset_set(ball, { 32, 32 });
+	components::circle_collider_set(ball, { 400 - 32, 500, 32.0f });
 
 	bool running = true;
 
