@@ -11,49 +11,6 @@
 #include "events.h"
 #include <math.h>
 
-// template draft idea
-//template<typename T>
-//struct component_buffers {
-//	bool valid[MAXIMUM_ENTITIES]{ false };
-//	T buffer[MAXIMUM_ENTITIES];
-//};
-//
-//template<auto& Global_Buffer>
-//struct component_logic {
-//	using Buffer_T = std::decay_t<decltype(Global_Buffer.buffer)>;
-//
-//	static bool exists(const entity& e) {
-//		if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES) {
-//			return false;
-//		}
-//		return Global_Buffer.valid[e];
-//	}
-//
-//	static void set(const entity& e, const Buffer_T& v) {
-//		if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) {
-//			Global_Buffer.valid[e] = true;
-//			Global_Buffer.buffer[e] = v;
-//		}
-//		else {
-//			printf("Error, sadly can't show you the type name nor the component name :(");
-//		}
-//	}
-//
-//	static Buffer_T get(const entity& e) {
-//		return Global_Buffer.buffer[e];
-//	}
-//
-//	static void destroy(const entity& e) {
-//		if (e != INVALID_ENTITY) {
-//			Global_Buffer.buffer[e] = false;
-//		}
-//	}
-//};
-//
-//// define component
-//auto controller_components = component_buffers<controller>{};
-//// access
-//component_logic<controller_components>::get(entity); // etc
 
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
@@ -62,64 +19,114 @@ using entity = size_t;
 // Invalid entity is 0 should cause a lot of cool out of the box behaviour
 #define INVALID_ENTITY 0
 #define MAXIMUM_ENTITIES 256
+#define MAXIMUM_COMPONENTS 256
+#define MAXIMUM_UPDATE_SYSTEMS 64
+#define MAXIMUM_RENDER_SYSTEMS 32
 
 // Entity
-size_t available_entities_pivot{ MAXIMUM_ENTITIES };
-entity available_entities[MAXIMUM_ENTITIES];
+size_t entities_available_pivot{ MAXIMUM_ENTITIES };
+entity entities_available[MAXIMUM_ENTITIES];
 
-size_t used_entities_pivot{ 0 };
-entity used_entities[MAXIMUM_ENTITIES];
+size_t entities_used_pivot{ 0 };
+entity entities_used[MAXIMUM_ENTITIES];
 
-void initialise_entities()
+namespace components
 {
-	for (int i = 0; i < MAXIMUM_ENTITIES; i++) {
-		available_entities[i] = i;
-		used_entities[i] = INVALID_ENTITY;
+	namespace control
+	{
+		size_t component_count{ 0 };
+
+		// Could be unsigned long long(?)
+		bool valid_loopup[MAXIMUM_ENTITIES * MAXIMUM_COMPONENTS]{ false };
+
+		void set_valid(entity e, size_t component_index, bool is_valid)
+		{
+			if (component_index >= component_count) {
+				// Error here
+				return;
+			}
+			valid_loopup[e * MAXIMUM_ENTITIES + component_index] = is_valid;
+		}
+
+		bool is_valid(entity e, size_t component_index)
+		{
+			return valid_loopup[e * MAXIMUM_ENTITIES + component_index];
+		}
 	}
 }
 
+void entities_initialise()
+{
+	for (int i = 0; i < MAXIMUM_ENTITIES; i++) {
+		entities_available[i] = i;
+		entities_used[i] = INVALID_ENTITY;
+	}
+}
+
+
+bool filter[MAXIMUM_COMPONENTS];
+bool* entities_filter(const entity e, size_t* count, ...)
+{
+	va_list args;
+	va_start(args, count);
+
+	bool* start = &components::control::valid_loopup[e * MAXIMUM_COMPONENTS + 0];
+	memset(filter, 0, sizeof(filter));
+	int bound = 0;
+	for (int i = 0; i < *count; i++) {
+		size_t index = va_arg(args, size_t);
+		filter[index] = start[index];
+		bound = SDL_max(bound, index);
+	}
+	*count = bound;
+	return filter;
+}
+
+
 entity entity_create()
 {
-	if (available_entities_pivot == 0) {
+	if (entities_available_pivot == 0) {
 		return INVALID_ENTITY;
 	}
-	available_entities_pivot -= 1;
-	entity e = available_entities[available_entities_pivot];
-	available_entities[available_entities_pivot] = INVALID_ENTITY;
-	used_entities[used_entities_pivot] = e;
-	used_entities_pivot += 1;
+	entities_available_pivot -= 1;
+	entity e = entities_available[entities_available_pivot];
+	entities_available[entities_available_pivot] = INVALID_ENTITY;
+	entities_used[entities_used_pivot] = e;
+	entities_used_pivot += 1;
 
 	return e;
 }
 
-void invalidate_components(const entity& e)
+void invalidate_components(entity e)
 {
-	// ...
+	bool* start = &components::control::valid_loopup[e * MAXIMUM_COMPONENTS + 0];
+	memset(start, 0, sizeof(bool) * components::control::component_count);
 }
 
-void entity_destroy(entity& e)
+void entity_destroy(entity* e)
 {
-	if (used_entities[used_entities_pivot - 1] == e) { // just track one back if we remove last one
-		used_entities_pivot -= 1;
-		used_entities[used_entities_pivot] = INVALID_ENTITY;
-		available_entities[available_entities_pivot] = e;
-		available_entities_pivot += 1;
+	if (entities_used[entities_used_pivot - 1] == *e) { // just track one back if we remove last one
+		entities_used_pivot -= 1;
+		entities_used[entities_used_pivot] = INVALID_ENTITY;
+		entities_available[entities_available_pivot] = *e;
+		entities_available_pivot += 1;
+		invalidate_components(*e); // meh, let's just try this
 	}
 	else {
 		// otherwise... find...
-		for (size_t i = 0; i < used_entities_pivot; i++) {
-			entity target = used_entities[i];
-			if (target == e) { // found 
+		for (size_t i = 0; i < entities_used_pivot; i++) {
+			entity target = entities_used[i];
+			if (target == *e) { // found 
 				// shift over 
-				for (int j = i; j < used_entities_pivot - 1; j++) {
-					used_entities[j] = used_entities[j + 1];
+				for (size_t j = i; j < entities_used_pivot - 1; j++) {
+					entities_used[j] = entities_used[j + 1];
 				}
-				used_entities_pivot -= 1;
-				used_entities[used_entities_pivot] = INVALID_ENTITY;
-				available_entities[available_entities_pivot] = e;
-				available_entities_pivot += 1;
+				entities_used_pivot -= 1;
+				entities_used[entities_used_pivot] = INVALID_ENTITY;
+				entities_available[entities_available_pivot] = *e;
+				entities_available_pivot += 1;
 				// How to invalidate all the commponents? :( Entity signature? Maybe? No. FUCK!
-				invalidate_components(e); // meh, let's just try this
+				invalidate_components(*e); // meh, let's just try this
 				break;
 			}
 		}
@@ -141,27 +148,28 @@ enum sprite_type
 	SPRITE_TYPE_TILE
 };
 
-// 1. First time function is used -> Register Component 
-// 2. Registration means: Each component gets associated to a number
-// 3. ... ? 
-// 4. Profit.
-
-
 #define COMPONENT(type, name) \
-bool name##_valid[MAXIMUM_ENTITIES]{ false }; \
-type name##_buffer[MAXIMUM_ENTITIES]; \
+namespace _internal \
+{ \
+	type name##_buffer[MAXIMUM_ENTITIES]; \
+} \
+size_t name##_id{ size_t(~0) }; \
 bool name##_exists(const entity e) \
 { \
-	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
+	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES || name##_id == size_t(~0)) { \
 		return false; \
 	} \
-	return name##_valid[e]; \
+	return components::control::is_valid(e, name##_id); \
 } \
-void name##_set(const entity e, const type& v) \
+void name##_set(const entity e, const type v) \
 { \
 	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
-		name##_valid[e] = true; \
-		name##_buffer[e] = v; \
+		if(name##_id == size_t(~0)) { \
+			name##_id = components::control::component_count; \
+			components::control::component_count++; \
+		} \
+		components::control::set_valid(e, name##_id, true); \
+		_internal::name##_buffer[e] = v; \
 	} \
 	else { \
 		printf("Error in %s of type %s", #name, #type); \
@@ -169,12 +177,12 @@ void name##_set(const entity e, const type& v) \
 } \
 type& name##_get(const entity e) \
 { \
-	return name##_buffer[e]; \
+	return _internal::name##_buffer[e]; \
 } \
 void name##_destroy(const entity e) \
 { \
-	if (e != INVALID_ENTITY) { \
-		name##_valid[e] = false; \
+	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES ||name##_id == size_t(~0)) { \
+		components::control::set_valid(e, name##_id, false); \
 	} \
 } \
 
@@ -193,9 +201,96 @@ namespace components
 	COMPONENT(SDL_Colour,	debug_color)	
 }
 
+namespace systems
+{
+	typedef void(*function)(entity);
+	namespace _internal
+	{
+		size_t update_buffer_pivot{ 0 };
+		function update_buffer[MAXIMUM_UPDATE_SYSTEMS];
+
+		size_t render_buffer_pivot{ 0 };
+		function render_buffer[MAXIMUM_RENDER_SYSTEMS];
+	}
+
+	bool add_on_update(function func)
+	{
+		if (_internal::update_buffer_pivot >= MAXIMUM_UPDATE_SYSTEMS) {
+			return false;
+		}
+		_internal::update_buffer[_internal::update_buffer_pivot] = func;
+		_internal::update_buffer_pivot += 1;
+		return true;
+	}
+
+
+	bool add_on_render(function func)
+	{
+		if (_internal::render_buffer_pivot >= MAXIMUM_RENDER_SYSTEMS) {
+			return false;
+		}
+		_internal::render_buffer[_internal::render_buffer_pivot] = func;
+		_internal::render_buffer_pivot += 1;
+		return true;
+	}
+
+	bool remove_and_shift_buffer(function* buffer, size_t* pivot, function compare)
+	{
+		if (buffer[*pivot - 1] == compare) {
+			// No need to actually do this, but it keeps the memory clean and dandy
+			buffer[*pivot - 1] = nullptr;
+			*pivot -= 1;
+			return true;
+		}
+		else {
+			for (size_t i = 0; i < *pivot - 1; i++) {
+				function target = buffer[i];
+				if (target == compare) { // found 
+					// shift over 
+					for (size_t j = i; j < *pivot - 1; j++) {
+						buffer[j] = buffer[j + 1];
+					}
+					*pivot -= 1;
+					buffer[*pivot] = nullptr;
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	bool remove_on_update(function func)
+	{
+		return remove_and_shift_buffer(_internal::update_buffer, &_internal::update_buffer_pivot, func);
+	}
+
+	bool remove_on_render(function func)
+	{
+		return remove_and_shift_buffer(_internal::render_buffer, &_internal::render_buffer_pivot, func);
+	}
+
+
+	void run()
+	{
+		for (size_t i = 0; i < _internal::update_buffer_pivot; i++) {
+			for (int j = 0; j < entities_used_pivot; j++) {
+				_internal::update_buffer[i](entities_used[j]);
+			}
+		}
+
+		engine::render_clear();
+		for (size_t i = 0; i < _internal::render_buffer_pivot; i++) {
+			for (int j = 0; j < entities_used_pivot; j++) {
+				_internal::render_buffer[i](entities_used[j]);
+			}
+		}
+		engine::render_present();
+	}
+}
+
 // Systems - Optimisation idea, instead of iterating through EVERYTHING, subsribe them : ) 
 // TODO: Make filter so systems only care for THEIR entities. IDK :D 
-bool entity_can_use_draw_system(const entity& e)
+bool entity_can_use_draw_system(entity& e)
 {
 	using namespace components;
 	return sprite_type_exists(e)
@@ -204,7 +299,7 @@ bool entity_can_use_draw_system(const entity& e)
 		&& size_exists(e);
 }
 
-void draw_system_each(const entity& e)
+void draw_system_each(entity e)
 {
 	if (entity_can_use_draw_system(e)) {
 		SDL_FPoint p = components::position_get(e);
@@ -222,20 +317,13 @@ void draw_system_each(const entity& e)
 	}
 }
 
-void draw_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		draw_system_each(used_entities[i]);
-	}
-}
-
-bool entity_can_use_player_system(const entity& e)
+bool entity_can_use_player_system(entity& e)
 {
 	return components::controller_exists(e) && components::position_exists(e) && components::speed_exists(e);
 }
 
 
-void player_system_each(const entity& e)
+void player_system_each(entity e)
 {
 	if (entity_can_use_player_system(e)) {
 		int move{ 0 };
@@ -252,14 +340,7 @@ void player_system_each(const entity& e)
 	}
 }
 
-void player_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		player_system_each(used_entities[i]);
-	}
-}
-
-bool entity_can_use_ball_system(const entity& e)
+bool entity_can_use_ball_system(entity& e)
 {
 	return !components::controller_exists(e)
 		&& components::position_exists(e)
@@ -283,7 +364,7 @@ SDL_FPoint SDL_FPointGetNormalised(SDL_FPoint v)
 	return v;
 }
 
-void ball_system_each(const entity& e)
+void ball_system_each(entity e)
 {
 	if (entity_can_use_ball_system(e)) {
 		SDL_FPoint& direction{ components::direction_get(e) };
@@ -311,13 +392,6 @@ void ball_system_each(const entity& e)
 
 		position.x += velocity.x;
 		position.y += velocity.y;
-	}
-}
-
-void ball_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		ball_system_each(used_entities[i]);
 	}
 }
 
@@ -374,16 +448,16 @@ bool SDL_IntersectFCircleFRect(const SDL_FCircle& circle, const SDL_FRect& rect,
 }
 
 
-void ball_collision_system_each(const entity& e)
+void ball_collision_system_each(entity e)
 {
 	// check if E really is a ball fulfilling entity
 	if (!entity_can_use_ball_system(e)) {
 		return;
 	}
 	using namespace components;
-	for (int i = 0; i < used_entities_pivot; i++) {
+	for (int i = 0; i < entities_used_pivot; i++) {
 		if (i != e) {
-			entity other = used_entities[i];
+			entity other = entities_used[i];
 			if (rect_collider_exists(other)) {
 				SDL_FCircle ball_collider = circle_collider_get(e);
 				SDL_FRect other_collider = rect_collider_get(other);
@@ -397,7 +471,7 @@ void ball_collision_system_each(const entity& e)
 					};
 					SDL_FPoint& direction = direction_get(e);
 					direction = SDL_FPointReflect(direction, normal);
-					entity_destroy(other);
+					entity_destroy(&other);
 					break;
 				}
 			}
@@ -405,14 +479,8 @@ void ball_collision_system_each(const entity& e)
 	}
 }
 
-void ball_collision_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		ball_collision_system_each(used_entities[i]);
-	}
-}
 
-void collider_update_position_system_each(const entity& e)
+void collider_update_position_system_each(entity e)
 {
 	if (!components::position_exists(e)) {
 		return;
@@ -441,14 +509,8 @@ void collider_update_position_system_each(const entity& e)
 	}
 }
 
-void collider_update_position_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		collider_update_position_system_each(used_entities[i]);
-	}
-}
 
-void debug_rect_collider_system_each(const entity& e)
+void debug_rect_collider_system_each(entity e)
 {
 	if (components::rect_collider_exists(e)) {
 		SDL_FRect rect = components::rect_collider_get(e);
@@ -461,14 +523,7 @@ void debug_rect_collider_system_each(const entity& e)
 	}
 }
 
-void debug_rect_collider_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		debug_rect_collider_system_each(used_entities[i]);
-	}
-}
-
-void debug_circle_collider_system_each(const entity& e)
+void debug_circle_collider_system_each(entity e)
 {
 	if (components::circle_collider_exists(e)) {
 		SDL_FCircle circle = components::circle_collider_get(e);
@@ -476,30 +531,11 @@ void debug_circle_collider_system_each(const entity& e)
 	}
 }
 
-void debug_circle_collider_system_run()
-{
-	for (int i = 0; i < used_entities_pivot; i++) {
-		debug_circle_collider_system_each(used_entities[i]);
-	}
-}
-
-void run(float dt)
-{
-	player_system_run();
-	ball_system_run();
-	collider_update_position_system_run();
-	ball_collision_system_run();
-
-	engine::render_clear();
-	draw_system_run();
-	debug_rect_collider_system_run();
-	debug_circle_collider_system_run();
-	engine::render_present();
-}
 
 int main()
 {
-	initialise_entities();
+
+	entities_initialise();
 	engine::initialise(SCREEN_WIDTH, SCREEN_HEIGHT);
 	engine::load_entities_texture("res/objects.png");
 	engine::set_entity_source_size(32, 32);
@@ -536,6 +572,16 @@ int main()
 	components::collider_offset_set(player, { 32, 32 });
 	components::circle_collider_set(player, { 400 - 32, 500, 32.0f });
 
+	size_t count = 5;
+	using namespace components;
+
+	// Filter first draft!
+	bool* filter = entities_filter(player, &count, position_id, sprite_type_id, circle_collider_id, speed_id, controller_id);
+	for (int i = 0; i < count; i++) {
+		printf("%d - ", (int)filter[i]);
+	}
+	printf("\n");
+
 	// Construct ball
 	entity ball{ entity_create() };
 	components::position_set(ball, { 400 - 32, 500 });
@@ -546,6 +592,17 @@ int main()
 	components::direction_set(ball, { 1.0f, -1.0f });
 	components::collider_offset_set(ball, { 32, 32 });
 	components::circle_collider_set(ball, { 400 - 32, 500, 32.0f });
+
+
+	systems::add_on_update(player_system_each);
+	systems::add_on_update(ball_system_each);
+	systems::add_on_update(collider_update_position_system_each);
+	systems::add_on_update(ball_collision_system_each);
+
+	systems::add_on_render(draw_system_each);
+	systems::add_on_render(debug_rect_collider_system_each);
+	systems::add_on_render(debug_circle_collider_system_each);
+	
 
 	bool running = true;
 
@@ -569,7 +626,7 @@ int main()
 		events::run();
 		input::run();
 
-		run(dt);
+		systems::run();
 
 		SDL_Delay(16);
 		// Update
