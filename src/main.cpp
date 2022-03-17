@@ -11,13 +11,14 @@
 #include "events.h"
 #include <math.h>
 
-
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
 
 using entity = size_t;
 // Invalid entity is 0 should cause a lot of cool out of the box behaviour
 #define INVALID_ENTITY 0
+#define INVALID_COMPONENT size_t(~0)
+
 #define MAXIMUM_ENTITIES 256
 #define MAXIMUM_COMPONENTS 256
 #define MAXIMUM_UPDATE_SYSTEMS 64
@@ -30,8 +31,15 @@ entity entities_available[MAXIMUM_ENTITIES];
 size_t entities_used_pivot{ 0 };
 entity entities_used[MAXIMUM_ENTITIES];
 
+struct signature
+{
+	bool field[MAXIMUM_COMPONENTS];
+	size_t count;
+};
+
 namespace components
 {
+
 	namespace control
 	{
 		size_t component_count{ 0 };
@@ -63,25 +71,80 @@ void entities_initialise()
 	}
 }
 
+signature signature_create_from_entity(const entity e)
+{
+	bool* start = &components::control::valid_loopup[e * MAXIMUM_COMPONENTS + 0];
 
-bool filter[MAXIMUM_COMPONENTS];
-bool* entities_filter(const entity e, size_t* count, ...)
+	signature signature{};
+	memset(signature.field, 0, sizeof(signature.field));
+	for (int i = 0; i < components::control::component_count; i++) {
+		signature.field[i] = start[i];
+		signature.count = SDL_max(signature.count, i);
+	}
+	return signature;
+}
+
+signature signature_create_from_entity_considering(const entity e, size_t count, ...)
 {
 	va_list args;
 	va_start(args, count);
 
 	bool* start = &components::control::valid_loopup[e * MAXIMUM_COMPONENTS + 0];
-	memset(filter, 0, sizeof(filter));
-	int bound = 0;
-	for (int i = 0; i < *count; i++) {
-		size_t index = va_arg(args, size_t);
-		filter[index] = start[index];
-		bound = SDL_max(bound, index);
+
+	signature signature{};
+	memset(signature.field, 0, sizeof(signature.field));
+	for (int i = 0; i < count; i++) {
+		size_t component_id = va_arg(args, size_t);
+		signature.field[component_id] = start[component_id];
+		signature.count = SDL_max(signature.count, component_id);
 	}
-	*count = bound;
-	return filter;
+
+	va_end(args);
+	return signature;
 }
 
+bool signature_entity_fulfils(const entity e, const signature* signa)
+{
+	bool* entity_signature = &components::control::valid_loopup[e * MAXIMUM_COMPONENTS + 0];
+	for (int i = 0; i < signa->count; i++) {
+		bool is_relevant = signa->field[i];
+		if (is_relevant && entity_signature[i] != is_relevant) {
+			return false;
+		}
+	}
+	return true;
+}
+
+
+bool signature_is_identical(const signature* lhs, const signature* rhs)
+{
+	size_t max;
+	size_t min;
+	const signature* check;
+
+	if (lhs->count > rhs->count) {
+		check = lhs;
+		min = rhs->count;
+		max = lhs->count;
+	}
+	else {
+		check = rhs;
+		min = lhs->count;
+		max = rhs->count;
+	}
+
+	for (size_t i = min; i < max; i++) {
+		if (check->field[i]) {
+			return false;
+		}
+	}
+	for (size_t i = 0; i < min; i++) {
+		if (lhs->field[i] != rhs->field[i]) {
+			return false;
+		}
+	}
+	return true;
+}
 
 entity entity_create()
 {
@@ -153,21 +216,25 @@ namespace _internal \
 { \
 	type name##_buffer[MAXIMUM_ENTITIES]; \
 } \
-size_t name##_id{ size_t(~0) }; \
+size_t name##_id{ INVALID_COMPONENT }; \
 bool name##_exists(const entity e) \
 { \
-	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES || name##_id == size_t(~0)) { \
+	if (e == INVALID_ENTITY || e >= MAXIMUM_ENTITIES || name##_id == INVALID_COMPONENT) { \
 		return false; \
 	} \
 	return components::control::is_valid(e, name##_id); \
 } \
+void name##_initialise() \
+{ \
+	if(name##_id == INVALID_COMPONENT) { \
+		name##_id = components::control::component_count; \
+		components::control::component_count++; \
+	} \
+} \
 void name##_set(const entity e, const type v) \
 { \
 	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES) { \
-		if(name##_id == size_t(~0)) { \
-			name##_id = components::control::component_count; \
-			components::control::component_count++; \
-		} \
+		name##_initialise(); \
 		components::control::set_valid(e, name##_id, true); \
 		_internal::name##_buffer[e] = v; \
 	} \
@@ -181,7 +248,7 @@ type& name##_get(const entity e) \
 } \
 void name##_destroy(const entity e) \
 { \
-	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES ||name##_id == size_t(~0)) { \
+	if (e != INVALID_ENTITY || e >= MAXIMUM_ENTITIES || name##_id == INVALID_COMPONENT) { \
 		components::control::set_valid(e, name##_id, false); \
 	} \
 } \
@@ -213,6 +280,7 @@ namespace systems
 		function render_buffer[MAXIMUM_RENDER_SYSTEMS];
 	}
 
+	// TODO: Add signature to it :D
 	bool add_on_update(function func)
 	{
 		if (_internal::update_buffer_pivot >= MAXIMUM_UPDATE_SYSTEMS) {
@@ -525,16 +593,34 @@ void debug_rect_collider_system_each(entity e)
 
 void debug_circle_collider_system_each(entity e)
 {
-	if (components::circle_collider_exists(e)) {
-		SDL_FCircle circle = components::circle_collider_get(e);
+	using namespace components;
+	if (circle_collider_exists(e)) {
+		SDL_FCircle circle = circle_collider_get(e);
 		engine::draw_circle(circle, { 255, 255, 0, 255 });
 	}
 }
 
+// kinda works, let's see
+void test(entity e, ...)
+{
+	va_list args;
+	va_start(args, e);
+
+	std::vector<size_t> signature;
+
+	size_t id;
+	id = va_arg(args, size_t);
+	while (id != INVALID_COMPONENT) {
+		signature.push_back(id);
+		id = va_arg(args, size_t);
+	}
+
+
+	va_end(args);
+}
 
 int main()
 {
-
 	entities_initialise();
 	engine::initialise(SCREEN_WIDTH, SCREEN_HEIGHT);
 	engine::load_entities_texture("res/objects.png");
@@ -572,15 +658,19 @@ int main()
 	components::collider_offset_set(player, { 32, 32 });
 	components::circle_collider_set(player, { 400 - 32, 500, 32.0f });
 
-	size_t count = 5;
 	using namespace components;
-
-	// Filter first draft!
-	bool* filter = entities_filter(player, &count, position_id, sprite_type_id, circle_collider_id, speed_id, controller_id);
-	for (int i = 0; i < count; i++) {
-		printf("%d - ", (int)filter[i]);
+	signature filter = signature_create_from_entity_considering(player, 4, position_id, sprite_type_id, speed_id, controller_id);
+	for (int i = 0; i < filter.count; i++) {
+		printf("%d - ", (int)filter.field[i]);
 	}
 	printf("\n");
+	signature player_signature = signature_create_from_entity(player);
+	for (int i = 0; i < filter.count; i++) {
+		printf("%d - ", (int)filter.field[i]);
+	}
+	printf("\n");
+
+	printf("%d\n", signature_entity_fulfils(player, &filter));
 
 	// Construct ball
 	entity ball{ entity_create() };
