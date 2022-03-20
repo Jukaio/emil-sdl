@@ -4,6 +4,7 @@
 #include <SDL/SDL_rect.h>
 struct input
 {
+	inline static constexpr SDL_Point zero = { 0, 0 };
 
 	static bool mouse_was_pressed(Uint32 mouse_button_mask);
 	static bool mouse_is_down(Uint32 mouse_button_mask);

@@ -16,8 +16,10 @@
 
 float delta_time = 0.0f;
 
-using entity = size_t;
-using component_id = size_t;
+typedef unsigned char DVD_byte;
+typedef size_t DVD_entity;
+typedef size_t DVD_component_id;
+
 // Invalid entity is 0 should cause a lot of cool out of the box behaviour
 #define INVALID_ENTITY 0
 #define INVALID_COMPONENT size_t(~0)
@@ -27,32 +29,70 @@ using component_id = size_t;
 #define MAXIMUM_RENDER_SYSTEMS 32
 
 // Entity
-size_t entities_available_pivot{ MAXIMUM_ENTITIES };
-entity entities_available[MAXIMUM_ENTITIES];
+size_t DVD_entities_available_pivot{ MAXIMUM_ENTITIES };
+DVD_entity DVD_entities_available[MAXIMUM_ENTITIES];
 
-size_t entities_used_pivot{ 0 };
-entity entities_used[MAXIMUM_ENTITIES];
+size_t DVD_entities_used_pivot{ 0 };
+DVD_entity DVD_entities_used[MAXIMUM_ENTITIES];
 
-bool entity_used_lookup[MAXIMUM_ENTITIES];
-bool entity_is_valid(entity e)
-{
-	return e < MAXIMUM_ENTITIES&& e != INVALID_ENTITY && entity_used_lookup[e];
-}
+bool DVD_entity_used_lookup[MAXIMUM_ENTITIES];
 
-namespace components
-{
-	namespace control
-	{
-		void set_valid(entity e, component_id component_index, bool is_valid);
-		bool is_valid(entity e, component_id component_index);
-	}
-}
+// Header
+bool DVD_entity_is_valid(DVD_entity e);
+void DVD_components_control_try_initialise(DVD_component_id component_index, DVD_byte* buffer_begin, size_t buffer_element_size);
+void DVD_components_control_set_valid(DVD_entity e, DVD_component_id component_index, bool is_valid);
+bool DVD_components_control_is_valid(DVD_entity e, DVD_component_id component_index);
 
-// Components
+#define COMPONENT(custom_namespace, type, name) \
+type DVD_internal_##name##_buffer[MAXIMUM_ENTITIES]; \
+const DVD_component_id custom_namespace##_##name##_id{ GET_COUNT_AND_INCREMENT }; \
+inline bool custom_namespace##_##name##_exists(const DVD_entity e) \
+{ \
+	if (!DVD_entity_is_valid(e) || custom_namespace##_##name##_id == INVALID_COMPONENT) { \
+		return false; \
+	} \
+	return DVD_components_control_is_valid(e, custom_namespace##_##name##_id); \
+} \
+inline void custom_namespace##_##name##_set(const DVD_entity e, const type v) \
+{ \
+	if (DVD_entity_is_valid(e)) { \
+		DVD_components_control_try_initialise(custom_namespace##_##name##_id, (DVD_byte*)(DVD_internal_##name##_buffer), sizeof(type)); \
+		DVD_components_control_set_valid(e, custom_namespace##_##name##_id, true); \
+		DVD_internal_##name##_buffer[e] = v; \
+	} \
+	else { \
+		printf("Error in %s of type %s", #name, #type); \
+	} \
+} \
+inline type* custom_namespace##_##name##_get(const DVD_entity e) \
+{ \
+	return &DVD_internal_##name##_buffer[e]; \
+} \
+inline void custom_namespace##_##name##_destroy(const DVD_entity e) \
+{ \
+	if (!DVD_entity_is_valid(e) || custom_namespace##_##name##_id == INVALID_COMPONENT) { \
+		DVD_components_control_set_valid(e, custom_namespace##_##name##_id, false); \
+	} \
+} \
+
+// User:
+// Encapsulate all used components with COMPONENT_AREA_START and COMPONENT_AREA_END to count all used components
+// otherwise, if you are lazy, just define MAXIMUM_COMPONENTS with a hardcoded value by yourself
+#define COMPONENT_AREA_START enum COUNTER_BASE { COUNTER_BASE_VALUE = __COUNTER__ };
+#define GET_COUNT_AND_INCREMENT (__COUNTER__ - COUNTER_BASE_VALUE - 1)
+#define COMPONENT_AREA_END enum COMPONENT_COUNT { COMPONENT_COUNT_VALUE = GET_COUNT_AND_INCREMENT };
+#define MAXIMUM_COMPONENTS COMPONENT_COUNT_VALUE
+
+// User-defined structs
 struct controller
 {
 	SDL_Scancode left;
 	SDL_Scancode right;
+};
+
+struct text
+{
+	char string[16];
 };
 
 enum sprite_type
@@ -61,127 +101,114 @@ enum sprite_type
 	SPRITE_TYPE_TILE
 };
 
-#define COMPONENT(type, name) \
-namespace _internal \
-{ \
-	type name##_buffer[MAXIMUM_ENTITIES]; \
-} \
-const component_id name##_id{ GET_COUNT_AND_INCREMENT }; \
-bool name##_exists(const entity e) \
-{ \
-	if (!entity_is_valid(e) || name##_id == INVALID_COMPONENT) { \
-		return false; \
-	} \
-	return components::control::is_valid(e, name##_id); \
-} \
-void name##_set(const entity e, const type v) \
-{ \
-	if (entity_is_valid(e)) { \
-		components::control::set_valid(e, name##_id, true); \
-		_internal::name##_buffer[e] = v; \
-	} \
-	else { \
-		printf("Error in %s of type %s", #name, #type); \
-	} \
-} \
-type& name##_get(const entity e) \
-{ \
-	return _internal::name##_buffer[e]; \
-} \
-void name##_destroy(const entity e) \
-{ \
-	if (!entity_is_valid(e) || name##_id == INVALID_COMPONENT) { \
-		components::control::set_valid(e, name##_id, false); \
-	} \
-} \
-
-#define COMPONENT_AREA_START enum COUNTER_BASE { COUNTER_BASE_VALUE = __COUNTER__ };
-#define GET_COUNT_AND_INCREMENT (__COUNTER__ - COUNTER_BASE::COUNTER_BASE_VALUE - 1)
-#define COMPONENT_AREA_END enum COMPONENT_COUNT { COMPONENT_COUNT_VALUE = GET_COUNT_AND_INCREMENT };
-#define MAXIMUM_COMPONENTS ::components::COMPONENT_COUNT::COMPONENT_COUNT_VALUE
-
-struct text
-{
-	char string[16];
-};
-
 typedef void(*button_event)();
 
-namespace components
+// User-defined Components implementation and interface generation (Optional, but convenient)
+COMPONENT_AREA_START
+// ...
+COMPONENT(gameplay, controller, controller)
+COMPONENT(gameplay, float, speed)
+COMPONENT(gameplay, SDL_FPoint, direction)
+COMPONENT(gameplay, SDL_FPoint, collider_offset)
+COMPONENT(gameplay, SDL_FCircle, circle_collider)
+COMPONENT(gameplay, SDL_FHorizontalCapsule, capsule_collider)
+COMPONENT(gameplay, SDL_FRect, rect_collider)
+COMPONENT(gameplay, sprite_type, sprite_type)
+COMPONENT(gameplay, SDL_Point, sprite_index)
+COMPONENT(gameplay, SDL_FPoint, position)
+COMPONENT(gameplay, SDL_FPoint, size)
+COMPONENT(gameplay, SDL_Colour, debug_color);
+COMPONENT(gameplay, SDL_Point, mouse_position);
+COMPONENT(gameplay, float, paddle_downset_manipulator);
+COMPONENT(gameplay, text, button_text);
+COMPONENT(gameplay, SDL_FRect, button_text_padding);
+COMPONENT(gameplay, SDL_Colour, unhover_colour);
+COMPONENT(gameplay, SDL_Colour, hover_colour);
+COMPONENT(gameplay, button_event, button_event);
+// ...
+COMPONENT_AREA_END
+
+// Separate into header
+// In static storage (.cpp/.c)
+size_t DVD_components_buffer_element_size_lookup[MAXIMUM_COMPONENTS]{ 0 };
+DVD_byte* DVD_components_buffer_begin_lookup[MAXIMUM_COMPONENTS]{ nullptr };
+bool DVD_components_valid_lookup[MAXIMUM_ENTITIES * MAXIMUM_COMPONENTS]{ false };
+
+bool DVD_components_control_is_initialised(DVD_component_id component_index)
 {
-	COMPONENT_AREA_START
-	// ...
-	COMPONENT(controller, controller)
-	COMPONENT(float, speed)
-	COMPONENT(SDL_FPoint, direction)
-	COMPONENT(SDL_FPoint, collider_offset)
-	COMPONENT(SDL_FCircle, circle_collider)
-	COMPONENT(SDL_FHorizontalCapsule, capsule_collider)
-	COMPONENT(SDL_FRect, rect_collider)
-	COMPONENT(sprite_type, sprite_type)
-	COMPONENT(SDL_Point, sprite_index)
-	COMPONENT(SDL_FPoint, position)
-	COMPONENT(SDL_FPoint, size)
-	COMPONENT(SDL_Colour, debug_color);
-	COMPONENT(SDL_Point, mouse_position);
-	COMPONENT(float, paddle_downset_manipulator);
-	COMPONENT(text, button_text);
-	COMPONENT(SDL_FRect, button_text_padding);
-	COMPONENT(SDL_Colour, unhover_colour);
-	COMPONENT(SDL_Colour, hover_colour);
-	COMPONENT(button_event, button_event);
-	// ...
-	COMPONENT_AREA_END
+	return DVD_components_buffer_element_size_lookup[component_index] != 0;
 }
-
-namespace components
+void DVD_components_control_initialise(DVD_component_id component_index, DVD_byte* buffer_begin, size_t buffer_element_size)
 {
-	namespace control
-	{
-		// Could be unsigned long long(?)
-		bool valid_lookup[MAXIMUM_ENTITIES * MAXIMUM_COMPONENTS]{ false };
-
-		void set_valid(entity e, component_id component_index, bool is_valid)
-		{
-			if (component_index >= MAXIMUM_COMPONENTS) {
-				// Error here
-				return;
-			}
-			valid_lookup[e * MAXIMUM_COMPONENTS + component_index] = is_valid;
-		}
-
-		bool is_valid(entity e, component_id component_index)
-		{
-			return valid_lookup[e * MAXIMUM_COMPONENTS + component_index];
-		}
+	if (component_index >= MAXIMUM_COMPONENTS) {
+		// Error here
+		return;
+	}
+	DVD_components_buffer_element_size_lookup[component_index] = buffer_element_size;
+	DVD_components_buffer_begin_lookup[component_index] = buffer_begin;
+}
+void DVD_components_control_try_initialise(DVD_component_id component_index, DVD_byte* buffer_begin, size_t buffer_element_size)
+{
+	if (!DVD_components_control_is_initialised(component_index)) {
+		DVD_components_control_initialise(component_index, buffer_begin, buffer_element_size);
+	}
+}
+void DVD_components_control_set_valid(DVD_entity e, DVD_component_id component_index, bool is_valid)
+{
+	if (component_index >= MAXIMUM_COMPONENTS) {
+		// Error here
+		return; 
+	}
+	DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + component_index] = is_valid;
+}
+bool DVD_components_control_is_valid(DVD_entity e, DVD_component_id component_index)
+{
+	return DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + component_index];
+}
+void DVD_components_single_copy(DVD_component_id component_index, DVD_entity from, DVD_entity to)
+{
+	if (DVD_components_control_is_initialised(component_index)) {
+		size_t element_size = DVD_components_buffer_element_size_lookup[component_index];
+		DVD_byte* start = DVD_components_buffer_begin_lookup[component_index];
+		DVD_byte* src_data = (start)+(from * element_size);
+		DVD_byte* dst_data = (start)+(to * element_size);
+		memcpy(dst_data, src_data, element_size);
+		DVD_components_control_set_valid(to, component_index, DVD_components_control_is_valid(from, component_index));
+	}
+}
+void DVD_components_entities_deep_copy(DVD_entity from, DVD_entity to)
+{
+	for (int i = 0; i < MAXIMUM_COMPONENTS; i++) {
+		DVD_components_single_copy(i, from, to);
 	}
 }
 
-struct signature
+struct DVD_signature
 {
 	bool field[MAXIMUM_COMPONENTS]; 
 	size_t count;
 };
-
-struct filter
+struct DVD_filter
 {
-	entity list[MAXIMUM_ENTITIES];
+	DVD_entity list[MAXIMUM_ENTITIES];
 	size_t count;
 };
-
-void entities_initialise()
+void DVD_entities_initialise()
 {
 	for (int i = 0; i < MAXIMUM_ENTITIES; i++) {
-		entities_available[i] = i;
-		entities_used[i] = INVALID_ENTITY;
+		DVD_entities_available[i] = i;
+		DVD_entities_used[i] = INVALID_ENTITY;
 	}
 }
-
-signature signature_create_from_entity(const entity e)
+bool DVD_entity_is_valid(DVD_entity e)
 {
-	bool* start = &components::control::valid_lookup[e * MAXIMUM_COMPONENTS + 0];
+	return e < MAXIMUM_ENTITIES && e != INVALID_ENTITY && DVD_entity_used_lookup[e];
+}
+DVD_signature DVD_signature_create_from_entity(const DVD_entity e)
+{
+	bool* start = &DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + 0];
 
-	signature signature{ {}, 0 };
+	DVD_signature signature{ {}, 0 };
 	memset(signature.field, 0, sizeof(signature.field));
 	for (int i = 0; i < MAXIMUM_COMPONENTS; i++) {
 		signature.field[i] = start[i];
@@ -189,15 +216,14 @@ signature signature_create_from_entity(const entity e)
 	}
 	return signature;
 }
-
-signature signature_create_from_entity_considering(const entity e, size_t count, ...)
+DVD_signature DVD_signature_create_intersection_with_entity(const DVD_entity e, size_t count, ...)
 {
 	va_list args;
 	va_start(args, count);
 
-	bool* start = &components::control::valid_lookup[e * MAXIMUM_COMPONENTS + 0];
+	bool* start = &DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + 0];
 
-	signature signature{ {}, 0 };
+	DVD_signature signature{ {}, 0 };
 	memset(signature.field, 0, sizeof(signature.field));
 	for (int i = 0; i < count; i++) {
 		size_t component_id = va_arg(args, size_t);
@@ -208,16 +234,15 @@ signature signature_create_from_entity_considering(const entity e, size_t count,
 	va_end(args);
 	return signature;
 }
-
-signature signature_create(size_t count, ...)
+DVD_signature DVD_signature_create(size_t count, ...)
 {
 	va_list args;
 	va_start(args, count);
 
-	signature signature{ {}, 0 };
+	DVD_signature signature{ {}, 0 };
 	memset(signature.field, 0, sizeof(signature.field));
 	for (int i = 0; i < count; i++) {
-		component_id component_id = va_arg(args, size_t);
+		DVD_component_id component_id = va_arg(args, size_t);
 		signature.field[component_id] = true;
 		signature.count = SDL_max(signature.count, component_id + 1);
 	}
@@ -225,31 +250,9 @@ signature signature_create(size_t count, ...)
 	va_end(args);
 	return signature;
 }
-
-
-#define SIGNATURE_START INVALID_COMPONENT
-#define SIGNATURE_END INVALID_COMPONENT
-signature signature_create_with_end(size_t index, ...)
+bool DVD_signature_entity_fulfils(const DVD_entity e, const DVD_signature* signa)
 {
-	va_list args;
-	va_start(args, index);
-
-	signature signature{};
-	memset(signature.field, 0, sizeof(signature.field));
-	component_id component_id = va_arg(args, size_t);
-	while (component_id != SIGNATURE_END) {
-		signature.field[component_id] = true;
-		signature.count = SDL_max(signature.count, component_id + 1);
-		component_id = va_arg(args, size_t);
-	}
-
-	va_end(args);
-	return signature;
-}
-
-bool signature_entity_fulfils(const entity e, const signature* signa)
-{
-	bool* entity_signature = &components::control::valid_lookup[e * MAXIMUM_COMPONENTS + 0];
+	bool* entity_signature = &DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + 0];
 	for (int i = 0; i < signa->count; i++) {
 		bool is_relevant = signa->field[i];
 		if (is_relevant && entity_signature[i] != is_relevant) {
@@ -258,14 +261,13 @@ bool signature_entity_fulfils(const entity e, const signature* signa)
 	}
 	return true;
 }
-
-filter entities_filter(const signature* signature)
+DVD_filter DVD_entities_filter(const DVD_signature* signature)
 {
-	filter f { { INVALID_ENTITY }, 0 };
-	for (int i = 0; i < entities_used_pivot; i++) {
-		entity e = entities_used[i];
+	DVD_filter f { { INVALID_ENTITY }, 0 };
+	for (int i = 0; i < DVD_entities_used_pivot; i++) {
+		DVD_entity e = DVD_entities_used[i];
 		for (int j = 0; j < signature->count; j++) {
-			if (signature_entity_fulfils(e, signature)) {
+			if (DVD_signature_entity_fulfils(e, signature)) {
 				f.list[f.count] = e;
 				f.count += 1;
 			}
@@ -273,25 +275,23 @@ filter entities_filter(const signature* signature)
 	}
 	return f;
 }
-
-filter entities_filter_ex(const signature* signa, const signature* can_not_have)
+DVD_filter DVD_entities_filter_ex(const DVD_signature* signa, const DVD_signature* can_not_have)
 {
-	filter f{ { INVALID_ENTITY }, 0 };
-	for (int i = 0; i < entities_used_pivot; i++) {
-		entity e = entities_used[i];
-		if (signature_entity_fulfils(e, signa) && !signature_entity_fulfils(e, can_not_have)) {
+	DVD_filter f{ { INVALID_ENTITY }, 0 };
+	for (int i = 0; i < DVD_entities_used_pivot; i++) {
+		DVD_entity e = DVD_entities_used[i];
+		if (DVD_signature_entity_fulfils(e, signa) && !DVD_signature_entity_fulfils(e, can_not_have)) {
 			f.list[f.count] = e;
 			f.count += 1;
 		}
 	}
 	return f;
 }
-
-bool signature_is_identical(const signature* lhs, const signature* rhs)
+bool DVD_signature_is_identical(const DVD_signature* lhs, const DVD_signature* rhs)
 {
 	size_t max;
 	size_t min;
-	const signature* check;
+	const DVD_signature* check;
 
 	if (lhs->count > rhs->count) {
 		check = lhs;
@@ -316,313 +316,315 @@ bool signature_is_identical(const signature* lhs, const signature* rhs)
 	}
 	return true;
 }
-
-entity entity_create()
+DVD_entity DVD_entities_create()
 {
-	if (entities_available_pivot == 0) {
+	if (DVD_entities_available_pivot == 0) {
 		return INVALID_ENTITY;
 	}
-	entities_available_pivot -= 1;
-	entity e = entities_available[entities_available_pivot];
-	entities_available[entities_available_pivot] = INVALID_ENTITY;
-	entities_used[entities_used_pivot] = e;
-	entities_used_pivot += 1;
-	entity_used_lookup[e] = true;
+	DVD_entities_available_pivot -= 1;
+	DVD_entity e = DVD_entities_available[DVD_entities_available_pivot];
+	DVD_entities_available[DVD_entities_available_pivot] = INVALID_ENTITY;
+	DVD_entities_used[DVD_entities_used_pivot] = e;
+	DVD_entities_used_pivot += 1;
+	DVD_entity_used_lookup[e] = true;
 	return e;
 }
-
-void invalidate_components(entity e)
+DVD_entity DVD_entities_create_copy(DVD_entity of)
 {
-	bool* start = &components::control::valid_lookup[e * MAXIMUM_COMPONENTS + 0];
+	DVD_entity e = DVD_entities_create();
+	DVD_components_entities_deep_copy(of, e);
+	return e;
+}
+void DVD_entities_invalidate_components(DVD_entity e)
+{
+	bool* start = &DVD_components_valid_lookup[e * MAXIMUM_COMPONENTS + 0];
 	memset(start, 0, sizeof(bool) * MAXIMUM_COMPONENTS);
 }
-
-
-void entity_destroy(entity* e)
+void DVD_entities_destroy(DVD_entity* e)
 {
-	if (entities_used[entities_used_pivot - 1] == *e) { // just track one back if we remove last one
-		invalidate_components(*e); // meh, let's just try this
-		entity_used_lookup[*e] = false;
-		entities_available[entities_available_pivot] = *e;
-		entities_available_pivot += 1;
-		entities_used_pivot -= 1;
-		entities_used[entities_used_pivot] = INVALID_ENTITY;
+	if (DVD_entities_used[DVD_entities_used_pivot - 1] == *e) { // just track one back if we remove last one
+		DVD_entities_invalidate_components(*e); // meh, let's just try this
+		DVD_entity_used_lookup[*e] = false;
+		DVD_entities_available[DVD_entities_available_pivot] = *e;
+		DVD_entities_available_pivot += 1;
+		DVD_entities_used_pivot -= 1;
+		DVD_entities_used[DVD_entities_used_pivot] = INVALID_ENTITY;
 	}
 	else {
 		// otherwise... find...
-		for (size_t i = 0; i < entities_used_pivot; i++) {
-			entity target = entities_used[i];
+		for (size_t i = 0; i < DVD_entities_used_pivot; i++) {
+			DVD_entity target = DVD_entities_used[i];
 			if (target == *e) { // found 
 				// shift over 
-				for (size_t j = i; j < entities_used_pivot - 1; j++) {
-					entities_used[j] = entities_used[j + 1];
+				for (size_t j = i; j < DVD_entities_used_pivot - 1; j++) {
+					DVD_entities_used[j] = DVD_entities_used[j + 1];
 				}
 				// How to invalidate all the commponents? :( Entity signature? Maybe? No. FUCK!
-				invalidate_components(*e); // meh, let's just try this
-				entity_used_lookup[*e] = false;
-				entities_available[entities_available_pivot] = *e;
-				entities_available_pivot += 1;
-				entities_used_pivot -= 1;
-				entities_used[entities_used_pivot] = INVALID_ENTITY;
+				DVD_entities_invalidate_components(*e); // meh, let's just try this
+				DVD_entity_used_lookup[*e] = false;
+				DVD_entities_available[DVD_entities_available_pivot] = *e;
+				DVD_entities_available_pivot += 1;
+				DVD_entities_used_pivot -= 1;
+				DVD_entities_used[DVD_entities_used_pivot] = INVALID_ENTITY;
 				break;
 			}
 		}
 	}
 }
-
-void entities_clear()
+void DVD_entities_clear()
 {
-	for (int i = entities_used_pivot - 1; i >= 0; i--) {
-		entity_destroy(&entities_used[i]);
+	for (int i = DVD_entities_used_pivot - 1; i >= 0; i--) {
+		DVD_entities_destroy(&DVD_entities_used[i]);
 	}
 }
 
-namespace systems
+typedef void(*DVD_systems_function)(DVD_entity);
+size_t DVD_systems_internal_update_buffer_pivot{ 0 };
+DVD_signature DVD_systems_internal_update_signatures[MAXIMUM_UPDATE_SYSTEMS];
+DVD_systems_function DVD_systems_internal_update_buffer[MAXIMUM_UPDATE_SYSTEMS];
+
+size_t DVD_systems_internal_render_buffer_pivot{ 0 };
+DVD_signature DVD_systems_internal_render_signatures[MAXIMUM_RENDER_SYSTEMS];
+DVD_systems_function DVD_systems_internal_render_buffer[MAXIMUM_RENDER_SYSTEMS];
+
+bool DVD_systems_add_on_update(DVD_signature signature, DVD_systems_function func)
 {
-	typedef void(*function)(entity);
-	namespace _internal
-	{
-		size_t update_buffer_pivot{ 0 };
-		signature update_signatures[MAXIMUM_UPDATE_SYSTEMS];
-		function update_buffer[MAXIMUM_UPDATE_SYSTEMS];
-
-		size_t render_buffer_pivot{ 0 };
-		signature render_signatures[MAXIMUM_RENDER_SYSTEMS];
-		function render_buffer[MAXIMUM_RENDER_SYSTEMS];
-	}
-
-	// TODO: Add signature to it :D
-	bool add_on_update(signature signature, function func)
-	{
-		if (_internal::update_buffer_pivot >= MAXIMUM_UPDATE_SYSTEMS) {
-			return false;
-		}
-		_internal::update_buffer[_internal::update_buffer_pivot] = func;
-		memcpy(&_internal::update_signatures[_internal::update_buffer_pivot], &signature, sizeof(signature));
-		_internal::update_buffer_pivot += 1;
-		return true;
-	}
-
-	bool add_on_render(signature signature, function func)
-	{
-		if (_internal::render_buffer_pivot >= MAXIMUM_RENDER_SYSTEMS) {
-			return false;
-		}
-		memcpy(&_internal::render_signatures[_internal::render_buffer_pivot], &signature, sizeof(signature));
-		_internal::render_buffer[_internal::render_buffer_pivot] = func;
-		_internal::render_buffer_pivot += 1;
-		return true;
-	}
-
-	bool remove_and_shift_buffer(function* buffer, size_t* pivot, function compare)
-	{
-		if (buffer[*pivot - 1] == compare) {
-			// No need to actually do this, but it keeps the memory clean and dandy
-			buffer[*pivot - 1] = nullptr;
-			*pivot -= 1;
-			return true;
-		}
-		else {
-			for (size_t i = 0; i < *pivot - 1; i++) {
-				function target = buffer[i];
-				if (target == compare) { // found 
-					// shift over 
-					for (size_t j = i; j < *pivot - 1; j++) {
-						buffer[j] = buffer[j + 1];
-					}
-					*pivot -= 1;
-					buffer[*pivot] = nullptr;
-					return true;
-				}
-			}
-		}
+	if (DVD_systems_internal_update_buffer_pivot >= MAXIMUM_UPDATE_SYSTEMS) {
 		return false;
 	}
-
-	void clear_all()
-	{
-		_internal::update_buffer_pivot = 0;
-		_internal::render_buffer_pivot = 0;
+	DVD_systems_internal_update_buffer[DVD_systems_internal_update_buffer_pivot] = func;
+	memcpy(&DVD_systems_internal_update_signatures[DVD_systems_internal_update_buffer_pivot], &signature, sizeof(signature));
+	DVD_systems_internal_update_buffer_pivot += 1;
+	return true;
+}
+bool DVD_systems_add_on_render(DVD_signature signature, DVD_systems_function func)
+{
+	if (DVD_systems_internal_render_buffer_pivot >= MAXIMUM_RENDER_SYSTEMS) {
+		return false;
 	}
-
-	bool remove_on_update(function func)
-	{
-		return remove_and_shift_buffer(_internal::update_buffer, &_internal::update_buffer_pivot, func);
+	memcpy(&DVD_systems_internal_render_signatures[DVD_systems_internal_render_buffer_pivot], &signature, sizeof(signature));
+	DVD_systems_internal_render_buffer[DVD_systems_internal_render_buffer_pivot] = func;
+	DVD_systems_internal_render_buffer_pivot += 1;
+	return true;
+}
+bool DVD_systems_internal_remove_and_shift_buffer(DVD_systems_function* buffer, size_t* pivot, DVD_systems_function compare)
+{
+	if (buffer[*pivot - 1] == compare) {
+		// No need to actually do this, but it keeps the memory clean and dandy
+		buffer[*pivot - 1] = nullptr;
+		*pivot -= 1;
+		return true;
 	}
-
-	bool remove_on_render(function func)
-	{
-		return remove_and_shift_buffer(_internal::render_buffer, &_internal::render_buffer_pivot, func);
-	}
-
-	void run()
-	{
-		for (size_t i = 0; i < _internal::update_buffer_pivot; i++) {
-			for (int j = 0; j < entities_used_pivot; j++) {
-				const entity e = entities_used[j];
-				if (signature_entity_fulfils(e, &_internal::update_signatures[i])) {
-					_internal::update_buffer[i](e);
+	else {
+		for (size_t i = 0; i < *pivot - 1; i++) {
+			DVD_systems_function target = buffer[i];
+			if (target == compare) { // found 
+				// shift over 
+				for (size_t j = i; j < *pivot - 1; j++) {
+					buffer[j] = buffer[j + 1];
 				}
+				*pivot -= 1;
+				buffer[*pivot] = nullptr;
+				return true;
 			}
 		}
-
-		engine::render_clear();
-		for (size_t i = 0; i < _internal::render_buffer_pivot; i++) {
-			for (int j = 0; j < entities_used_pivot; j++) {
-				const entity e = entities_used[j];
-				if (signature_entity_fulfils(e, &_internal::render_signatures[i])) {
-					_internal::render_buffer[i](e);
-				}
+	}
+	return false;
+}
+void DVD_systems_remove_all_update()
+{
+	DVD_systems_internal_update_buffer_pivot = 0;
+}
+void DVD_systems_remove_all_render()
+{
+	DVD_systems_internal_render_buffer_pivot = 0;
+}
+void DVD_systems_remove_all()
+{
+	DVD_systems_remove_all_update();
+	DVD_systems_remove_all_render();
+}
+bool DVD_systems_remove_on_update(DVD_systems_function func)
+{
+	return DVD_systems_internal_remove_and_shift_buffer(DVD_systems_internal_update_buffer, &DVD_systems_internal_update_buffer_pivot, func);
+}
+bool DVD_systems_remove_on_render(DVD_systems_function func)
+{
+	return DVD_systems_internal_remove_and_shift_buffer(DVD_systems_internal_render_buffer, &DVD_systems_internal_render_buffer_pivot, func);
+}
+void DVD_systems_run()
+{
+	for (size_t i = 0; i < DVD_systems_internal_update_buffer_pivot; i++) {
+		for (int j = 0; j < DVD_entities_used_pivot; j++) {
+			const DVD_entity e = DVD_entities_used[j];
+			if (DVD_signature_entity_fulfils(e, &DVD_systems_internal_update_signatures[i])) {
+				DVD_systems_internal_update_buffer[i](e);
 			}
 		}
-
-		engine::render_present();
 	}
+
+	engine::render_clear();
+	for (size_t i = 0; i < DVD_systems_internal_render_buffer_pivot; i++) {
+		for (int j = 0; j < DVD_entities_used_pivot; j++) {
+			const DVD_entity e = DVD_entities_used[j];
+			if (DVD_signature_entity_fulfils(e, &DVD_systems_internal_render_signatures[i])) {
+				DVD_systems_internal_render_buffer[i](e);
+			}
+		}
+	}
+
+	engine::render_present();
 }
 
-void draw_system_each(entity e)
+// User-defined systems!
+void draw_system_each(DVD_entity e)
 {
-	SDL_FPoint p = components::position_get(e);
-	SDL_FPoint s = components::size_get(e);
+	SDL_FPoint p = *gameplay_position_get(e);
+	SDL_FPoint s = *gameplay_size_get(e);
 	SDL_FRect destination{ p.x, p.y, s.x, s.y };
-	switch (components::sprite_type_get(e)) {
+	switch (*gameplay_sprite_type_get(e)) {
 		case SPRITE_TYPE_ENTITY:
-			engine::draw_entity(components::sprite_index_get(e), destination);
+			engine::draw_entity(*gameplay_sprite_index_get(e), destination);
 			break;
 
 		case SPRITE_TYPE_TILE:
-			engine::draw_tile(components::sprite_index_get(e), destination);
+			engine::draw_tile(*gameplay_sprite_index_get(e), destination);
 			break;
 	}
 }
 
-void player_system_each(entity e)
+void player_system(DVD_entity e)
 {
 	int move{ 0 };
-	controller c{ components::controller_get(e) };
+	controller* c{ gameplay_controller_get(e) };
 
-	if (input::is_down(c.left)) {
+	if (input::was_pressed(SDL_SCANCODE_BACKSPACE)) {
+		DVD_systems_remove_all();
+		DVD_entities_clear();
+		(*gameplay_button_event_get(e))();
+	}
+
+	if (input::is_down(c->left)) {
 		move -= 1;
 	}
-	if (input::is_down(c.right)) {
+	if (input::is_down(c->right)) {
 		move += 1;
 	}
 
-	components::position_get(e).x += (move * components::speed_get(e) * delta_time);
+	gameplay_position_get(e)->x += (move * *gameplay_speed_get(e) * delta_time);
 }
 
-void ball_system_each(entity e)
+void ball_system(DVD_entity e)
 {
 
-	SDL_FPoint& direction{ components::direction_get(e) };
-	SDL_FPoint dir{ direction };
+	SDL_FPoint* direction{ gameplay_direction_get(e) };
+	SDL_FPoint dir{ *direction };
 	// Normalise and apply
-	float speed{ components::speed_get(e) };
-
+	float speed{ *gameplay_speed_get(e) };
+	
 	SDL_FPointNormalise(&dir);
-	direction = dir;
+	(*direction) = dir;
 
 	// Reuse dir velocity
 	SDL_FPoint velocity{ dir.x * speed, dir.y * speed };
 
 	// Apply velocity - Reflect from screen edges
-	SDL_FPoint& position{ components::position_get(e) };
-	SDL_FCircle circle{ components::circle_collider_get(e) };
+	SDL_FPoint* position{ gameplay_position_get(e) };
+	SDL_FCircle circle{ *gameplay_circle_collider_get(e) };
 	if ((circle.x - circle.radius) + dir.x <= 0.0f || (circle.x + circle.radius) + dir.x >= SCREEN_WIDTH) {
-		direction.x = -direction.x;
+		direction->x = -direction->x;
 		velocity.x = -velocity.x;
 	}
 	if ((circle.y - circle.radius) + dir.y <= 0.0f || (circle.y + circle.radius) + dir.y >= SCREEN_HEIGHT) {
-		direction.y = -direction.y;
+		direction->y = -direction->y;
 		velocity.y = -velocity.y;
 	}
 
-	position.x += velocity.x * delta_time;
-	position.y += velocity.y * delta_time;
+	position->x += velocity.x * delta_time;
+	position->y += velocity.y * delta_time;
 }
 
-
-void ball_collision_system_each(entity e)
+void ball_collision_system(DVD_entity e)
 {
-	using namespace components;
-	signature has = signature_create(1, rect_collider_id);
-	signature can_not = signature_create(1, controller_id);
-	filter entities = entities_filter_ex(&has, &can_not);
-
+	
+	DVD_signature has = DVD_signature_create(1, gameplay_rect_collider_id);
+	DVD_signature can_not = DVD_signature_create(1, gameplay_controller_id);
+	DVD_filter entities = DVD_entities_filter_ex(&has, &can_not);
+	
 	size_t pivot{ 0 };
 	SDL_Rect collider[8];
 	SDL_Point normals[8];
 
 	for (int i = 0; i < entities.count; i++) {
-		entity other = entities.list[i];
-		SDL_FCircle ball_collider = circle_collider_get(e);
-		SDL_FRect other_collider = rect_collider_get(other);
+		DVD_entity other = entities.list[i];
+		SDL_FCircle ball_collider = *gameplay_circle_collider_get(e);
+		SDL_FRect other_collider = *gameplay_rect_collider_get(other);
 		SDL_FPoint normal;
 		if (SDL_IntersectFCircleFRect(ball_collider, other_collider, normal)) { // This is rubbish...
 
-			SDL_FPoint& direction = direction_get(e);
-			direction = SDL_FPointReflect(direction, normal);
-			entity_destroy(&other);
+			SDL_FPoint* direction = gameplay_direction_get(e);
+			(*direction) = SDL_FPointReflect(*direction, normal);
+			DVD_entities_destroy(&other);
 			break;
 		}
 	}
 }
 
-void collider_update_position_system_each(entity e)
+void collider_update_position_system(DVD_entity e)
 {
-	SDL_FPoint position = components::position_get(e);
-	if (components::rect_collider_exists(e)) {
-		SDL_FRect& rect = components::rect_collider_get(e);
-		if (components::collider_offset_exists(e)) {
-			SDL_FPoint offset = components::collider_offset_get(e);
+	SDL_FPoint position = *gameplay_position_get(e);
+	if (gameplay_rect_collider_exists(e)) {
+		SDL_FRect* rect = gameplay_rect_collider_get(e);
+		if (gameplay_collider_offset_exists(e)) {
+			SDL_FPoint offset = *gameplay_collider_offset_get(e);
 			position.x += offset.x;
 			position.y += offset.y;
 		}
-		rect.x = position.x;
-		rect.y = position.y;
+		rect->x = position.x;
+		rect->y = position.y;
 	}
-	if (components::circle_collider_exists(e)) {
-		SDL_FCircle& circle = components::circle_collider_get(e);
-		if (components::collider_offset_exists(e)) {
-			SDL_FPoint offset = components::collider_offset_get(e);
+	if (gameplay_circle_collider_exists(e)) {
+		SDL_FCircle* circle = gameplay_circle_collider_get(e);
+		if (gameplay_collider_offset_exists(e)) {
+			SDL_FPoint offset = *gameplay_collider_offset_get(e);
 			position.x += offset.x;
 			position.y += offset.y;
 		}
-		circle.x = position.x;
-		circle.y = position.y;
+		circle->x = position.x;
+		circle->y = position.y;
 	}
-	if (components::capsule_collider_exists(e)) {
-		SDL_FHorizontalCapsule& capsule = components::capsule_collider_get(e);
-		if (components::collider_offset_exists(e)) {
-			SDL_FPoint offset = components::collider_offset_get(e);
+	if (gameplay_capsule_collider_exists(e)) {
+		SDL_FHorizontalCapsule* capsule = gameplay_capsule_collider_get(e);
+		if (gameplay_collider_offset_exists(e)) {
+			SDL_FPoint offset = *gameplay_collider_offset_get(e);
 			position.x += offset.x;
 			position.y += offset.y;
 		}
-		capsule.position.x = position.x;
-		capsule.position.y = position.y;
+		capsule->position.x = position.x;
+		capsule->position.y = position.y;
 	}
 }
 
-void paddle_ball_collision_system_each(entity e)
+void paddle_ball_collision_system(DVD_entity e)
 {
-	using namespace components;
-	SDL_FCircle& ball_collider = circle_collider_get(e);
-	for (int i = 0; i < entities_used_pivot; i++) {
+	
+	SDL_FCircle* ball_collider = gameplay_circle_collider_get(e);
+	for (int i = 0; i < DVD_entities_used_pivot; i++) {
 		if (i != e) {
-			entity other = entities_used[i];
-			if (rect_collider_exists(other) && paddle_downset_manipulator_exists(other)) {
-				SDL_FRect other_collider = rect_collider_get(other);
+			DVD_entity other = DVD_entities_used[i];
+			if (gameplay_rect_collider_exists(other) && gameplay_paddle_downset_manipulator_exists(other)) {
+				SDL_FRect other_collider = *gameplay_rect_collider_get(other);
 				SDL_FPoint normal;
-				SDL_FPoint& direction = direction_get(e);
-				if (SDL_IntersectFCircleFRect(ball_collider, other_collider, normal)) { // This is rubbish...
+				SDL_FPoint* direction = gameplay_direction_get(e);
+				if (SDL_IntersectFCircleFRect(*ball_collider, other_collider, normal)) { // This is rubbish...
 
 					float centreX = (other_collider.x + other_collider.w * 0.5f);
 					float centreY = (other_collider.y + other_collider.h * 0.5f);
-					centreY += paddle_downset_manipulator_get(e);
-					direction = { ball_collider.x - centreX, ball_collider.y - centreY };
+					centreY += *gameplay_paddle_downset_manipulator_get(e);
+					(*direction) = { ball_collider->x - centreX, ball_collider->y - centreY};
 
-					ball_system_each(e);
-					collider_update_position_system_each(e);
+					ball_system(e);
+					collider_update_position_system(e);
 					break;
 				}
 			}
@@ -630,57 +632,57 @@ void paddle_ball_collision_system_each(entity e)
 	}
 }
 
-void debug_rect_collider_system_each(entity e)
+void debug_rect_collider_system(DVD_entity e)
 {
-	SDL_FRect rect = components::rect_collider_get(e);
-	if (components::debug_color_exists(e)) {
-		engine::draw_rect(rect, components::debug_color_get(e));
+	SDL_FRect rect = *gameplay_rect_collider_get(e);
+	if (gameplay_debug_color_exists(e)) {
+		engine::draw_rect(rect, *gameplay_debug_color_get(e));
 	}
 	else {
 		engine::draw_rect(rect, { 255, 0, 0, 255 });
 	}
 }
 
-void debug_circle_collider_system_each(entity e)
+void debug_circle_collider_system(DVD_entity e)
 {
-	using namespace components;
+	
 
-	SDL_FCircle circle = circle_collider_get(e);
+	SDL_FCircle circle = *gameplay_circle_collider_get(e);
 	engine::draw_circle(circle, { 255, 255, 0, 255 });
 }
 
-void debug_capsule_collider_system_each(entity e)
+void debug_capsule_collider_system(DVD_entity e)
 {
-	using namespace components;
+	
 
-	SDL_FHorizontalCapsule capsule = capsule_collider_get(e);
+	SDL_FHorizontalCapsule capsule = *gameplay_capsule_collider_get(e);
 	engine::draw_capsule(capsule, { 255, 255, 0, 255 });
 }
 
 
-void mouse_position_update_each(entity e)
+void mouse_position_update_system(DVD_entity e)
 {
-	using namespace components;
-	SDL_Point* position = &mouse_position_get(e);
+	
+	SDL_Point* position = gameplay_mouse_position_get(e);
 	*position = input::get_mouse_position();
 }
 
-void debug_circle_collider_position_each(entity e)
+void debug_circle_collider_position_each(DVD_entity e)
 {
-	using namespace components;
-	SDL_Point position = mouse_position_get(e);
-	SDL_FCircle* collider = &circle_collider_get(e);
+	
+	SDL_Point position = *gameplay_mouse_position_get(e);
+	SDL_FCircle* collider = gameplay_circle_collider_get(e);
 	collider->x = position.x;
 	collider->y = position.y;
 
-	for (int i = 0; i < entities_used_pivot; i++) {
+	for (int i = 0; i < DVD_entities_used_pivot; i++) {
 		if (i != e) {
-			entity other = entities_used[i];
-			if (rect_collider_exists(other)) {
-				if (debug_color_exists(other)) {
-					SDL_FRect other_collider = rect_collider_get(other);
+			DVD_entity other = DVD_entities_used[i];
+			if (gameplay_rect_collider_exists(other)) {
+				if (gameplay_debug_color_exists(other)) {
+					SDL_FRect other_collider = *gameplay_rect_collider_get(other);
 					SDL_FPoint normal;
-					SDL_Colour* debug_colour = &debug_color_get(other);
+					SDL_Colour* debug_colour = gameplay_debug_color_get(other);
 
 					if (SDL_IntersectFCircleFRect(*collider, other_collider, normal)) { // This is rubbish...
 						*debug_colour = SDL_Colour{ 0, 255, 0, 255 };
@@ -694,16 +696,16 @@ void debug_circle_collider_position_each(entity e)
 	}
 }
 
-void debug_draw_normals(entity e)
+void debug_draw_normals_system(DVD_entity e)
 {
-	using namespace components;
-	SDL_FRect rect = rect_collider_get(e);
-	signature include = signature_create(2, mouse_position_id, circle_collider_id);
-	filter filter = entities_filter(&include);
+	
+	SDL_FRect rect = *gameplay_rect_collider_get(e);
+	DVD_signature include = DVD_signature_create(2, gameplay_mouse_position_id, gameplay_circle_collider_id);
+	DVD_filter filter = DVD_entities_filter(&include);
 
 	for (int i = 0; i < filter.count; i++) {
-		entity other = filter.list[i];
-		SDL_FCircle circle_collider = circle_collider_get(other);
+		DVD_entity other = filter.list[i];
+		SDL_FCircle circle_collider = *gameplay_circle_collider_get(other);
 
 		SDL_FPoint normal;
 		if (SDL_IntersectFCircleFRect(circle_collider, rect, normal)) { // This is rubbish...
@@ -719,22 +721,22 @@ void debug_draw_normals(entity e)
 }
 
 // Menu
-void buttom_draw_system_each(entity e)
+void buttom_draw_system(DVD_entity e)
 {
-	using namespace components;
-	SDL_FPoint normal;
-	SDL_FRect rect = rect_collider_get(e);
-	SDL_FRect padding = button_text_padding_get(e);
+	SDL_FRect rect = *gameplay_rect_collider_get(e);
+	SDL_FRect padding = *gameplay_button_text_padding_get(e);
 
 	SDL_Point mouse_position = input::get_mouse_position();
 	SDL_FCircle mouse_collider{ mouse_position.x, mouse_position.y, 1.0f };
 
-	SDL_Colour colour = unhover_colour_get(e);
+	SDL_Colour colour = *gameplay_unhover_colour_get(e);
+
+	SDL_FPoint normal;
 	if (SDL_IntersectFCircleFRect(mouse_collider, rect, normal)) {
 		if (input::mouse_was_pressed(SDL_BUTTON_LMASK)) {
-			button_event_get(e)();
+			(*gameplay_button_event_get(e))();
 		}
-		colour = hover_colour_get(e);
+		colour = *gameplay_hover_colour_get(e);
 	}
 
 	engine::draw_rect(rect, colour);
@@ -743,115 +745,286 @@ void buttom_draw_system_each(entity e)
 	rect.w -= padding.w;
 	rect.h -= padding.h;
 
-	text t = button_text_get(e);
+	text t = *gameplay_button_text_get(e);
 	engine::draw_text(t.string, rect);
 }
 
-
+void load_menu();
 void load_gameplay()
 {
 	// Construct level
-	entity blocks[10 * 5];
+	DVD_entity blocks[10 * 5];
 	float block_height = 32.0f;
 	float block_width = 64.0f;
 	SDL_FPoint offset{ 80, 20 };
 	for (int x = 0; x < 10; x++) {
 		for (int y = 0; y < 5; y++) {
-			entity block = entity_create();
+			DVD_entity block = DVD_entities_create();
 			SDL_FPoint position{ offset.x + (x * block_width), offset.y + (y * block_height) };
 			SDL_FRect collider{ position.x, position.y, block_width, block_height };
-			components::position_set(block, position);
-			components::size_set(block, { block_width, block_height });
-			components::sprite_index_set(block, { 1, 1 });
-			components::sprite_type_set(block, SPRITE_TYPE_TILE);
-			components::rect_collider_set(block, collider);
-			components::debug_color_set(block, { 255, 0, 0, 255 });
+			gameplay_position_set(block, position);
+			gameplay_size_set(block, { block_width, block_height });
+			gameplay_sprite_index_set(block, { 1, 1 });
+			gameplay_sprite_type_set(block, SPRITE_TYPE_TILE);
+			gameplay_rect_collider_set(block, collider);
+			gameplay_debug_color_set(block, { 255, 0, 0, 255 });
 			blocks[(y * 10) + x] = block;
 		}
 	}
 
 	// Construct player
-	entity player{ entity_create() };
-	components::position_set(player, { 400 - 32, 500 });
-	components::size_set(player, { 64, 64 });
-	components::sprite_index_set(player, { 1, 1 });
-	components::sprite_type_set(player, SPRITE_TYPE_ENTITY);
-	components::speed_set(player, 180.0f);
-	components::controller_set(player, { SDL_SCANCODE_A, SDL_SCANCODE_D });
-	components::collider_offset_set(player, { 0, 0 });
-	components::rect_collider_set(player, { 400 - 32, 500 , 64.0f, 16.0f });
-	components::paddle_downset_manipulator_set(player, 64.0f);
+	DVD_entity player{ DVD_entities_create() };
+	gameplay_position_set(player, { 400 - 32, 500 });
+	gameplay_size_set(player, { 64, 64 });
+	gameplay_sprite_index_set(player, { 1, 1 });
+	gameplay_sprite_type_set(player, SPRITE_TYPE_ENTITY);
+	gameplay_speed_set(player, 180.0f);
+	gameplay_controller_set(player, { SDL_SCANCODE_A, SDL_SCANCODE_D });
+	gameplay_collider_offset_set(player, { 0, 0 });
+	gameplay_rect_collider_set(player, { 400 - 32, 500 , 64.0f, 16.0f });
+	gameplay_paddle_downset_manipulator_set(player, 64.0f);
+	gameplay_button_event_set(player, []() {
+		DVD_entities_clear();
+		DVD_systems_remove_all();
+		load_menu();
+	});
 
 	//Construct ball
-	entity ball{ entity_create() };
-	components::position_set(ball, { 400 - 32, 400 });
-	components::size_set(ball, { 16, 16 });
-	components::sprite_index_set(ball, { 1, 1 });
-	components::sprite_type_set(ball, SPRITE_TYPE_ENTITY);
-	components::speed_set(ball, 240.0f);
-	components::direction_set(ball, { 0.0f, -1.0f });
-	components::collider_offset_set(ball, { 8, 8 });
-	components::circle_collider_set(ball, { 400 - 32, 500, 8.0f });
-
-	//// Construct Debug rect
-	//entity debug_rect{ entity_create() };
-	//components::mouse_position_set(debug_rect, { 0, 0 });
-	//components::collider_offset_set(debug_rect, { 4, 4 });
-	//components::circle_collider_set(debug_rect, { 0, 0, 8.0f });
+	DVD_entity ball{ DVD_entities_create() };
+	gameplay_position_set(ball, { 400 - 32, 400 });
+	gameplay_size_set(ball, { 16, 16 });
+	gameplay_sprite_index_set(ball, { 1, 1 });
+	gameplay_sprite_type_set(ball, SPRITE_TYPE_ENTITY);
+	gameplay_speed_set(ball, 240.0f);
+	gameplay_direction_set(ball, { 0.0f, -1.0f });
+	gameplay_collider_offset_set(ball, { 8, 8 });
+	gameplay_circle_collider_set(ball, { 400 - 32, 500, 8.0f });
 
 
-	using namespace components;
-	signature ball_signature = signature_create(4, position_id, speed_id, direction_id, circle_collider_id);
+	
+	DVD_signature ball_signature = DVD_signature_create(4, gameplay_position_id, gameplay_speed_id, gameplay_direction_id, gameplay_circle_collider_id);
+	DVD_systems_add_on_update(DVD_signature_create(3, gameplay_controller_id, gameplay_position_id, gameplay_speed_id), player_system);
+	DVD_systems_add_on_update(ball_signature, ball_system);
 
-	systems::add_on_update(signature_create(3, controller_id, position_id, speed_id), player_system_each);
-	systems::add_on_update(ball_signature, ball_system_each);
+	DVD_systems_add_on_update(DVD_signature_create(1, gameplay_position_id), collider_update_position_system);
+	DVD_systems_add_on_update(ball_signature, ball_collision_system);
+	DVD_systems_add_on_update(ball_signature, paddle_ball_collision_system);
 
-	systems::add_on_update(signature_create(1, position_id), collider_update_position_system_each);
-	systems::add_on_update(ball_signature, ball_collision_system_each);
-	systems::add_on_update(ball_signature, paddle_ball_collision_system_each);
+	DVD_systems_add_on_update(DVD_signature_create(1, gameplay_mouse_position_id), mouse_position_update_system);
+	//DVD_systems_add_on_update(signature_create(2, mouse_position_id, circle_collider_id), debug_circle_collider_position_each);
 
-	systems::add_on_update(signature_create(1, mouse_position_id), mouse_position_update_each);
-	//systems::add_on_update(signature_create(2, mouse_position_id, circle_collider_id), debug_circle_collider_position_each);
-
-	systems::add_on_render(signature_create(4, sprite_type_id, sprite_index_id, position_id, size_id), draw_system_each);
-	systems::add_on_render(signature_create(1, rect_collider_id), debug_rect_collider_system_each);
-	systems::add_on_render(signature_create(1, circle_collider_id), debug_circle_collider_system_each);
-	systems::add_on_render(signature_create(1, capsule_collider_id), debug_capsule_collider_system_each);
-	systems::add_on_render(signature_create(1, rect_collider_id), debug_draw_normals);
+	DVD_systems_add_on_render(DVD_signature_create(4, gameplay_sprite_type_id, gameplay_sprite_index_id, gameplay_position_id, gameplay_size_id), draw_system_each);
+	DVD_systems_add_on_render(DVD_signature_create(1, gameplay_rect_collider_id), debug_rect_collider_system);
+	DVD_systems_add_on_render(DVD_signature_create(1, gameplay_circle_collider_id), debug_circle_collider_system);
+	DVD_systems_add_on_render(DVD_signature_create(1, gameplay_capsule_collider_id), debug_capsule_collider_system);
+	DVD_systems_add_on_render(DVD_signature_create(1, gameplay_rect_collider_id), debug_draw_normals_system);
 }
 
 void load_menu()
 {
-	entity start_button{ entity_create() };
-	components::rect_collider_set(start_button, {32, 32, 128, 64 });
-	components::button_text_set(start_button, { "Start!" });
-	components::button_text_padding_set(start_button, { 16, 16, 16, 16 });
-	components::hover_colour_set(start_button, { 255, 255, 0, 255 });
-	components::unhover_colour_set(start_button, { 255, 0, 255, 255 });
-	components::button_event_set(start_button, []() {
-		systems::clear_all();
-		entities_clear();
+	DVD_entity start_button{ DVD_entities_create() };
+	gameplay_rect_collider_set(start_button, {0, 0, 128, 64 });
+	gameplay_button_text_set(start_button, { "Start!" });
+	gameplay_button_text_padding_set(start_button, { 16, 16, 16, 16 });
+	gameplay_hover_colour_set(start_button, { 255, 255, 0, 255 });
+	gameplay_unhover_colour_set(start_button, { 255, 0, 255, 255 });
+	gameplay_button_event_set(start_button, []() {
+		DVD_systems_remove_all();
+		DVD_entities_clear();
 		load_gameplay();
 	});
 
-	entity load_button{ entity_create() };
-	components::rect_collider_set(load_button, { 32, 32 + 64, 128, 64 });
-	components::button_text_set(load_button, { "Load Level!" });
-	components::button_text_padding_set(load_button, { 16, 16, 16, 16 });
-	components::hover_colour_set(load_button, { 255, 255, 0, 255 });
-	components::unhover_colour_set(load_button, { 255, 0, 255, 255 });
-	components::button_event_set(load_button, []() {
+	DVD_entity create_level_button{ DVD_entities_create_copy(start_button) };
+	gameplay_rect_collider_set(create_level_button, { 0, 64, 128, 64 });
+	gameplay_button_text_set(create_level_button, { "Create Level!" });
+	gameplay_button_event_set(create_level_button, []() {
+		printf("I love you!\n");
+	});
+
+	DVD_entity load_button{ DVD_entities_create_copy(start_button) };
+	gameplay_rect_collider_set(load_button, { 0, 0 + 128, 128, 64 });
+	gameplay_button_text_set(load_button, { "Load Level!" });
+	gameplay_button_event_set(load_button, []() {
+		printf("I hate you!\n");
+	});
+
+	DVD_entity save_level{ DVD_entities_create_copy(start_button) };
+	gameplay_rect_collider_set(save_level, { 0, 0 + 128 + 64, 128, 64 });
+	gameplay_button_text_set(save_level, { "Save Level!" });
+	gameplay_button_event_set(save_level, []() {
 		printf("Go fuck yourself!\n");
 	});
 
-	using namespace components;
-	systems::add_on_render(signature_create_from_entity(start_button), buttom_draw_system_each);
+	DVD_systems_add_on_render(DVD_signature_create_from_entity(start_button), buttom_draw_system);
+}
+
+// Everything below meant for porting all this stuff on top to C++ : ) 
+
+// Utility for... template meta programming
+template<typename...>
+struct typename_pack {};
+
+template<typename, typename>
+struct pack_union;
+
+template<typename T, typename... Set>
+constexpr bool set_contains_unions = (std::is_same_v<T, Set> || ...);
+
+template<typename... Dst, typename Set_T, typename... Set_Rest>
+struct pack_union<typename_pack<Dst...>, typename_pack<Set_T, Set_Rest...>> {
+	using result = typename pack_union<
+		std::conditional_t<
+			set_contains_unions<Set_T, Dst...>, 
+			typename_pack<Dst...>, 
+			typename_pack<Set_T, Dst...>>,
+		typename_pack<Set_Rest...>
+	>::result;
+};
+
+template<typename... Dst>
+struct pack_union<typename_pack<Dst...>, typename_pack<>> {
+	using result = typename_pack<Dst...>;
+};
+
+template<typename, typename, typename>
+struct pack_intersection;
+
+template<typename T, typename... Set>
+constexpr bool set_contains_intersection = (std::is_same_v<T, Set> || ...);
+
+template<typename... Dst, typename Set_T, typename... Set_Rest, typename... union_set>
+struct pack_intersection<typename_pack<Dst...>, typename_pack<Set_T, Set_Rest...>, typename_pack<union_set...>> {
+	using result = typename pack_intersection<
+		typename_pack<Dst...>,
+		typename_pack<Set_Rest...>,						
+		std::conditional_t<
+			set_contains_intersection<Set_T, Dst...>,
+			typename_pack<Set_T, union_set...>,				 
+			typename_pack<union_set...>>
+		>::result;
+};
+
+template<typename... Dst, typename... union_set>
+struct pack_intersection<typename_pack<Dst...>, typename_pack<>, typename_pack<union_set...>> {
+	using result = typename_pack<union_set...>;
+};
+
+
+template<typename... types>
+struct type_list;
+
+template<>
+struct type_list<>
+{
+	template<typename search>
+	static constexpr bool contains()
+	{
+		return false;
+	}
+};
+
+template <typename current_type, typename... types>
+struct type_list<current_type, types...> : type_list<types...>
+{
+	using current = current_type;
+	using base = type_list<types...>;
+
+	template<typename... other_types>
+	using intersection_result = pack_intersection<typename_pack<current_type, types...>, typename_pack<other_types...>, typename_pack<>>::result;
+
+	template<typename... other_types>
+	using union_result = pack_union<typename_pack<current_type, types...>, typename_pack<other_types...>>::result;
+};
+
+template<const size_t size, typename ...rest>
+struct columns;
+
+template<const size_t size>
+struct columns<size>
+{
+	using current = columns<size>;
+	using resource = decltype(nullptr);
+	using base = decltype(nullptr);
+
+	template<typename find_type, const bool is_valid = false>
+	auto get()
+	{
+		static_assert(is_valid, "Type does not exist in columns!");
+	}
+};
+
+template<const size_t size, typename type, typename ...rest>
+struct columns<size, type, rest...> : columns<size, rest...>
+{
+	using current = columns<size, type, rest...>;
+	using base = columns<size, rest...>;
+	using resource = type;
+
+	resource data[size]{};
+
+	resource& operator[](size_t index)
+	{
+		return data[index];
+	}
+
+	template<typename find_type>
+	auto get()
+	{
+		using current = resource;
+		if constexpr (std::is_same<find_type, current>::value) {
+			return this;
+		}
+		else {
+			return base::template get<find_type>();
+		}
+	};
+};
+
+template<const size_t size, typename type, typename ...rest>
+struct table
+{
+	using this_table = table<size, type, rest...>;
+	using types_in_table = type_list<type, rest...>;
+	const size_t count = size;
+
+	bool valid_lookup[size * (sizeof...(rest) + 1)]{false};
+	columns<size, type, rest...> cols;
+
+	template<typename type_to_search>
+	static constexpr bool exists = this_table::types_in_table::template contains<type_to_search>();
+
+	template<typename type_to_search>
+	auto get() -> decltype(cols.get<type_to_search>())
+	{
+		return cols.get<type_to_search>();
+	}
+};
+
+
+template<typename find_type, const size_t count, typename table_type, typename ...cols_rest>
+auto has(table<count, table_type, cols_rest...> t)
+{
+	constexpr bool type_exists = table<count, table_type, cols_rest...>::types_in_table::template contains<find_type>();
+	if constexpr (type_exists) {
+		return find<find_type>(&t.cols);
+	}
+	else {
+		static_assert(type_exists, "The type you are looking for does not exist in table");
+	}
 }
 
 
 int main()
 {
-	entities_initialise();
+	table<256, float, int> main;
+	//auto stuff = main.exists<double>();
+	auto test = main.get<int>();
+	auto that = main.exists<float>;
+	using some_list = type_list<int, int, float, double, std::string, wchar_t>;
+	using intersection_type = some_list::intersection_result<char, int, wchar_t>;
+	using union_type = some_list::union_result<char, int, int>;
+
+	DVD_entities_initialise();
 	engine::initialise(SCREEN_WIDTH, SCREEN_HEIGHT);
 	engine::load_entities_texture("res/objects.png");
 	engine::set_entity_source_size(32, 32);
@@ -860,13 +1033,9 @@ int main()
 	engine::set_tile_source_size(18, 18);
 
 	engine::load_font("res/roboto.ttf");
-
 	load_menu();
 
-	//load_gameplay();
-
 	bool running = true;
-
 	events::add(SDL_QUIT, [&running](const SDL_Event&) { running = false; });
 	events::add(SDL_KEYDOWN, 
 	[&running](const SDL_Event& e)
@@ -874,7 +1043,6 @@ int main()
 		if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) running = false;
 	});
 
-	const float SECONDS = 1 / 1000.0f;
 	Uint64 prev_ticks = SDL_GetPerformanceCounter();
 	while (running) // Each frame
 	{
@@ -886,8 +1054,6 @@ int main()
 		events::run();
 		input::run();
 
-		systems::run();
-		// Update
-		// Render
+		DVD_systems_run();
 	}
 }
