@@ -861,7 +861,7 @@ void load_menu()
 // Everything below meant for porting all this stuff on top to C++ : ) 
 
 // Utility for... template meta programming
-template<typename...>
+template<typename... pack>
 struct typename_pack {};
 
 template<typename, typename>
@@ -953,9 +953,45 @@ struct columns<size>
 	}
 };
 
+template<const size_t size, typename parent_type_pack, typename type_pack>
+struct sub_columns;
+
+template<const size_t size, typename... parent_types>
+struct sub_columns<size, typename_pack<parent_types...>, typename_pack<>>
+{
+	columns<size, parent_types...>* main;
+
+	sub_columns(columns<size, parent_types...>* main)
+	{
+		this->main = main;
+	}
+};
+
+template<const size_t size, typename... parent_types, typename type, typename ...rest>
+struct sub_columns<size, typename_pack<parent_types...>, typename_pack<type, rest...>> 
+	: sub_columns<size, typename_pack<parent_types...>, typename_pack<rest...>>
+{
+	using base = sub_columns<size, typename_pack<parent_types...>, typename_pack<rest...>>;
+	using resource = type;
+	type* column;
+
+	sub_columns(columns<size, parent_types...>* main)
+		: base(main)
+	{
+		column = main->get<type>()->data;
+	}
+
+	template<typename... types>
+	void ForEach(std::function<void(types...)> function)
+	{
+
+	}
+};
+
 template<const size_t size, typename type, typename ...rest>
 struct columns<size, type, rest...> : columns<size, rest...>
 {
+	using types = type_list<type, rest...>;
 	using current = columns<size, type, rest...>;
 	using base = columns<size, rest...>;
 	using resource = type;
@@ -978,6 +1014,14 @@ struct columns<size, type, rest...> : columns<size, rest...>
 			return base::template get<find_type>();
 		}
 	};
+
+	template<typename... find_types>
+	auto where()
+	{
+		using intersection = types::template intersection_result<find_types...>;
+		sub_columns<size, typename_pack<type, rest...>, intersection> sub(this);
+		return sub;
+	}
 };
 
 template<const size_t size, typename type, typename ...rest>
@@ -997,6 +1041,12 @@ struct table
 	auto get() -> decltype(cols.get<type_to_search>())
 	{
 		return cols.get<type_to_search>();
+	}
+
+	template<typename... find_types>
+	auto where()
+	{
+		return cols.where<find_types...>();
 	}
 };
 
@@ -1020,7 +1070,13 @@ int main()
 	//auto stuff = main.exists<double>();
 	auto test = main.get<int>();
 	auto that = main.exists<float>;
-	using some_list = type_list<int, int, float, double, std::string, wchar_t>;
+	std::function<void(int)> func = [](int) {
+
+	};
+	main.where<int, float>().ForEach(func);
+	
+	
+	using some_list = type_list<int, float, double, std::string, wchar_t>;
 	using intersection_type = some_list::intersection_result<char, int, wchar_t>;
 	using union_type = some_list::union_result<char, int, int>;
 
