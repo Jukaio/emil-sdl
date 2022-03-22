@@ -861,8 +861,50 @@ void load_menu()
 // Everything below meant for porting all this stuff on top to C++ : ) 
 
 // Utility for... template meta programming
+
+// For later
+// https://stackoverflow.com/questions/7943525/is-it-possible-to-figure-out-the-parameter-type-and-return-type-of-a-lambda/7943765#7943765
+template <typename T>
+struct function_traits
+	: public function_traits<decltype(&T::operator())>
+{};
+// For generic types, directly use the result of the signature of its 'operator()'
+
+template <typename ClassType, typename ReturnType, typename... Args>
+struct function_traits<ReturnType(ClassType::*)(Args...) const>
+	// we specialize for pointers to member function
+{
+	enum { arity = sizeof...(Args) };
+	// arity is the number of arguments.
+
+	typedef ReturnType result_type;
+
+	template <size_t i>
+	struct arg
+	{
+		typedef typename std::tuple_element<i, std::tuple<Args...>>::type type;
+		// the i-th argument is equivalent to the i-th tuple element of a tuple
+		// composed of those arguments.
+	};
+};
+
+// test code below:
+int main()
+{
+	auto lambda = [](int i) { return long(i * 10); };
+
+	typedef function_traits<decltype(lambda)> traits;
+	static_assert(std::is_same<long, traits::result_type>::value, "err");
+	static_assert(std::is_same<int, traits::arg<0>::type>::value, "err");
+
+	return 0;
+}
+
 template<typename... pack>
-struct typename_pack {};
+struct typename_pack 
+{
+	static constexpr size_t size = sizeof...(pack);
+};
 
 template<typename, typename>
 struct pack_union;
@@ -962,8 +1004,15 @@ struct sub_columns<size, typename_pack<parent_types...>, typename_pack<>>
 	columns<size, parent_types...>* main;
 
 	sub_columns(columns<size, parent_types...>* main)
+		: main(main)
 	{
-		this->main = main;
+	}
+
+
+	template<typename... function_types, typename... invoke_types>
+	void invoke(std::function<void(function_types...)> func, invoke_types... data)
+	{
+		func(data...);
 	}
 };
 
@@ -971,6 +1020,7 @@ template<const size_t size, typename... parent_types, typename type, typename ..
 struct sub_columns<size, typename_pack<parent_types...>, typename_pack<type, rest...>> 
 	: sub_columns<size, typename_pack<parent_types...>, typename_pack<rest...>>
 {
+	using type_list = type_list<type, rest...>;
 	using base = sub_columns<size, typename_pack<parent_types...>, typename_pack<rest...>>;
 	using resource = type;
 	type* column;
@@ -981,11 +1031,34 @@ struct sub_columns<size, typename_pack<parent_types...>, typename_pack<type, res
 		column = main->get<type>()->data;
 	}
 
-	template<typename... types>
-	void ForEach(std::function<void(types...)> function)
-	{
 
+	template<typename... function_types, typename... invoke_types>
+	void invoke(std::function<void(function_types...)> func, invoke_types... data)
+	{
+		if constexpr (set_contains_intersection<resource, function_types...>) {
+			base::template invoke(func, *column, data...);
+		}
+		else {
+			base::template invoke(func, data...);
+		}
 	}
+
+	template<typename... find_types>
+	auto where()
+	{
+		using intersection = type_list::template intersection_result<find_types...>;
+		sub_columns<size, typename_pack<parent_types...>, intersection> sub(this->main);
+		return sub;
+	}
+
+	template<typename find_type, typename... find_types>
+	void for_each(std::function<void(find_type, find_types...)> function)
+	{
+		using intersection = type_list::template intersection_result<find_type, find_types...>;
+		static_assert(intersection::size > 0, "ERR: No valid types in column process");
+		this->where<find_type, find_types...>().invoke(function);
+	}
+
 };
 
 template<const size_t size, typename type, typename ...rest>
@@ -1027,6 +1100,14 @@ struct columns<size, type, rest...> : columns<size, rest...>
 template<const size_t size, typename type, typename ...rest>
 struct table
 {
+	size_t entities_available_pivot{ size };
+	DVD_entity entities_available[size];
+
+	size_t entities_used_pivot{ 0 };
+	DVD_entity entities_used[size];
+
+	bool entity_used_lookup[size];
+
 	using this_table = table<size, type, rest...>;
 	using types_in_table = type_list<type, rest...>;
 	const size_t count = size;
@@ -1037,44 +1118,36 @@ struct table
 	template<typename type_to_search>
 	static constexpr bool exists = this_table::types_in_table::template contains<type_to_search>();
 
-	template<typename type_to_search>
-	auto get() -> decltype(cols.get<type_to_search>())
-	{
-		return cols.get<type_to_search>();
-	}
-
 	template<typename... find_types>
 	auto where()
 	{
 		return cols.where<find_types...>();
 	}
+
+	template<typename find_type, typename... find_types>
+	void for_each(std::function<void(find_type, find_types...)> function)
+	{
+		cols.where<find_type, find_types...>().invoke(function);
+	}
 };
-
-
-template<typename find_type, const size_t count, typename table_type, typename ...cols_rest>
-auto has(table<count, table_type, cols_rest...> t)
-{
-	constexpr bool type_exists = table<count, table_type, cols_rest...>::types_in_table::template contains<find_type>();
-	if constexpr (type_exists) {
-		return find<find_type>(&t.cols);
-	}
-	else {
-		static_assert(type_exists, "The type you are looking for does not exist in table");
-	}
-}
 
 
 int main()
 {
-	table<256, float, int> main;
-	//auto stuff = main.exists<double>();
-	auto test = main.get<int>();
-	auto that = main.exists<float>;
-	std::function<void(int)> func = [](int) {
-
-	};
-	main.where<int, float>().ForEach(func);
+	table<256, float, int, char, double> main;
 	
+
+	auto that = main.exists<float>;
+	using testtt = table<256, float, int, char, double>::types_in_table;
+	std::function func = [](float, int) {
+		std::cout << "stop here!";
+	};
+	std::function func2 = [](int, float) {
+		std::cout << "stop here!";
+	};
+
+	main.for_each(func);
+	main.for_each(func2);
 	
 	using some_list = type_list<int, float, double, std::string, wchar_t>;
 	using intersection_type = some_list::intersection_result<char, int, wchar_t>;
